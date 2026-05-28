@@ -1,0 +1,66 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      QUANT_LAB_DB_PATH: ${QUANT_LAB_DB_PATH:-/app/data/quant_lab.sqlite3}
+      QUANT_LAB_DUCKDB_PATH: ${QUANT_LAB_DUCKDB_PATH:-/app/data/quant_lab.duckdb}
+      QUANT_LAB_CANDLE_PARQUET_PATH: ${QUANT_LAB_CANDLE_PARQUET_PATH:-/app/data/quant_lab_market_candles.parquet}
+      QUANT_LAB_COLUMNAR_CACHE_ENABLED: ${QUANT_LAB_COLUMNAR_CACHE_ENABLED:-true}
+      QUANT_LAB_CANDLE_CACHE_TTL_SECONDS: ${QUANT_LAB_CANDLE_CACHE_TTL_SECONDS:-300}
+      QUANT_LAB_RESEARCH_SCHEDULER_ENABLED: ${QUANT_LAB_RESEARCH_SCHEDULER_ENABLED:-true}
+      QUANT_LAB_RESEARCH_SCHEDULER_POLL_SECONDS: ${QUANT_LAB_RESEARCH_SCHEDULER_POLL_SECONDS:-60}
+      UPBIT_BASE_URL: ${UPBIT_BASE_URL:-https://api.upbit.com}
+      UPBIT_ACCESS_KEY: ${UPBIT_ACCESS_KEY:-}
+      UPBIT_SECRET_KEY: ${UPBIT_SECRET_KEY:-}
+      QUANT_LAB_LIVE_TRADING_ENABLED: ${QUANT_LAB_LIVE_TRADING_ENABLED:-false}
+      QUANT_LAB_LIVE_TRADING_ACK: ${QUANT_LAB_LIVE_TRADING_ACK:-}
+      QUANT_LAB_MIN_ORDER_NOTIONAL_KRW: ${QUANT_LAB_MIN_ORDER_NOTIONAL_KRW:-5000}
+      QUANT_LAB_APPROVAL_FEE_BPS: ${QUANT_LAB_APPROVAL_FEE_BPS:-5}
+      QUANT_LAB_MAX_APPROVAL_EXPOSURE_PCT: ${QUANT_LAB_MAX_APPROVAL_EXPOSURE_PCT:-60}
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      ALPHA_VANTAGE_BASE_URL: ${ALPHA_VANTAGE_BASE_URL:-https://www.alphavantage.co}
+      ALPACA_API_KEY_ID: ${ALPACA_API_KEY_ID:-}
+      ALPACA_API_SECRET_KEY: ${ALPACA_API_SECRET_KEY:-}
+      ALPACA_PAPER_BASE_URL: ${ALPACA_PAPER_BASE_URL:-https://paper-api.alpaca.markets}
+      ALPACA_PAPER_TRADING_ENABLED: ${ALPACA_PAPER_TRADING_ENABLED:-false}
+      ALPACA_PAPER_TRADING_ACK: ${ALPACA_PAPER_TRADING_ACK:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - quant-backend-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ""
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5173:80"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -qO- http://127.0.0.1/ >/dev/null"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  quant-backend-data:

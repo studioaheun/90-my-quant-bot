@@ -1,0 +1,15 @@
+.git/
+.venv/
+backend/.venv/
+backend/data/
+backend/tests/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+artifacts/
+backups/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.duckdb
+*.parquet

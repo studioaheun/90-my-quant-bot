@@ -500,10 +500,14 @@ def append_progress_summary_checks(
             expected=expected_warning_review_artifacts_only,
             actual=warning_review.get("review_artifacts_command"),
         )
-        expected_pre_approval_sequence = [
-            expected_warning_summary_json,
-            expected_warning_review_artifacts_only,
-        ]
+        expected_pre_approval_sequence = (
+            []
+            if warning_review.get("action_needed") is False
+            else [
+                expected_warning_summary_json,
+                expected_warning_review_artifacts_only,
+            ]
+        )
         actual_pre_approval_sequence = warning_review.get("pre_approval_review_sequence")
         checks.append(
             {

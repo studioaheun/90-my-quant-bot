@@ -1313,16 +1313,30 @@ def check_handoff_command_safety(package_dir: Path) -> list[dict[str, Any]]:
     if not progress_next_command_errors:
         progress_next_command = progress_summary.get("next_command") if progress_summary else None
         next_step_command = next_step_payload.get("next_command") if next_step_payload else None
-        if not isinstance(progress_next_command, str) or not progress_next_command:
-            progress_next_command_errors.append("progress_summary.next_command")
-        if not isinstance(next_step_command, str) or not next_step_command:
-            progress_next_command_errors.append("next-release-step.json next_command")
-        if (
-            isinstance(progress_next_command, str)
-            and isinstance(next_step_command, str)
-            and progress_next_command != next_step_command
-        ):
-            progress_next_command_errors.append("progress_summary.next_command != next-release-step.json next_command")
+        remaining_items = (
+            release_status_payload.get("remaining_items")
+            if isinstance(release_status_payload, dict)
+            else None
+        )
+        no_remaining_items = isinstance(remaining_items, list) and not remaining_items
+        if no_remaining_items:
+            if progress_next_command is not None:
+                progress_next_command_errors.append("progress_summary.next_command should be null")
+            if next_step_command != LIVE_BETA_FINAL_GATE_COMMAND:
+                progress_next_command_errors.append("next-release-step.json final gate command")
+        else:
+            if not isinstance(progress_next_command, str) or not progress_next_command:
+                progress_next_command_errors.append("progress_summary.next_command")
+            if not isinstance(next_step_command, str) or not next_step_command:
+                progress_next_command_errors.append("next-release-step.json next_command")
+            if (
+                isinstance(progress_next_command, str)
+                and isinstance(next_step_command, str)
+                and progress_next_command != next_step_command
+            ):
+                progress_next_command_errors.append(
+                    "progress_summary.next_command != next-release-step.json next_command"
+                )
     add_check(
         checks,
         check_id="handoff_release_status_progress_next_step_command",

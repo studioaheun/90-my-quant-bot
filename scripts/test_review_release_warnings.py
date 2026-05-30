@@ -63,6 +63,25 @@ def write_triage(package_dir: Path) -> None:
     )
 
 
+def write_clear_triage(package_dir: Path) -> None:
+    package_dir.mkdir(parents=True)
+    (package_dir / "release-warning-triage.json").write_text(
+        json.dumps(
+            {
+                "summary": {"live_beta_archive_missing": False},
+                "live_beta_archive": {
+                    "status": "present_or_not_required",
+                    "recommended_action": "No live-beta archive warning was reported.",
+                },
+                "warning_alerts": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class ReviewReleaseWarningsSmokeTests(unittest.TestCase):
     def test_apply_requires_operator_approved_flag(self) -> None:
         completed = subprocess.run(
@@ -283,6 +302,35 @@ class ReviewReleaseWarningsSmokeTests(unittest.TestCase):
             f"python3 scripts/review_release_warnings.py --package-dir {package_dir} --pre-approval-sequence-only",
         )
         self.assertIn("release-warning-operator-checklist.md", summary["operator_checklist_path"])
+
+    def test_clear_triage_status_does_not_require_operator_action(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="quant-warning-review-") as tmp:
+            package_dir = Path(tmp) / "package"
+            write_clear_triage(package_dir)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(REVIEW_RELEASE_WARNINGS),
+                    "--package-dir",
+                    str(package_dir),
+                    "--summary-json-only",
+                    "--fail-if-action-needed",
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        summary = json.loads(completed.stdout)
+        self.assertEqual(summary["status"], "clear")
+        self.assertFalse(summary["action_needed"])
+        self.assertEqual(summary["counts"]["warning_alerts"], 0)
+        self.assertEqual(summary["counts"]["planned"], 0)
+        self.assertEqual(summary["recommended_next"]["id"], "gate_warning_actions_clear")
+        self.assertFalse(summary["recommended_next"]["requires_operator_approval"])
+        self.assertIn("--json-only --fail-if-action-needed", summary["recommended_next"]["command"])
 
     def test_pre_approval_sequence_only_prints_apply_free_review_commands(self) -> None:
         with tempfile.TemporaryDirectory(prefix="quant-warning-review-") as tmp:

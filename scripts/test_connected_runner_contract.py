@@ -473,6 +473,56 @@ class ConnectedRunnerContractSmokeTests(unittest.TestCase):
             "pass",
         )
 
+        clear_warning_payload = json.loads(json.dumps(payload))
+        clear_warning = clear_warning_payload["progress_summary"]["warning_review"]
+        clear_warning["action_needed"] = False
+        clear_warning["pre_approval_review_sequence"] = []
+        clear_warning_checks: list[dict[str, object]] = []
+        self.contract.append_progress_summary_checks(
+            clear_warning_checks,
+            payload=clear_warning_payload,
+            expected_preflight=expected_preflight,
+            expected_next_command_only=expected_next_command_only,
+            expected_next_json_only=expected_next_json_only,
+            expected_connected_command_only=expected_connected_command_only,
+            expected_connected_command_sequence=expected_connected_sequence,
+            expected_operator_command_only=expected_operator_command_only,
+            expected_operator_command_sequence=expected_operator_sequence,
+            expected_operator_review_sequence=expected_operator_review_sequence,
+            expected_operator_json_only=expected_operator_json_only,
+            expected_remaining_sequence=expected_remaining_sequence,
+            expected_progress_json=expected_progress_json,
+            expected_completion_plan=expected_completion_plan,
+            expected_completion_plan_json=expected_completion_plan_json,
+            expected_completion_requirements=expected_completion_requirements,
+            expected_completion_requirements_json=expected_completion_requirements_json,
+            expected_owner_lanes=expected_owner_lanes,
+            expected_owner_lanes_json=expected_owner_lanes_json,
+            expected_handoff_context_json=expected_handoff_context_json,
+            expected_handoff_command_sequence=expected_handoff_command_sequence,
+            expected_local_readiness_setup_sequence=expected_local_readiness_setup,
+            expected_local_readiness_command_sequence=expected_local_readiness_sequence,
+            expected_local_readiness_setup_sequence_preview=expected_local_readiness_setup_preview,
+            expected_local_readiness_command_sequence_preview=expected_local_readiness_sequence_preview,
+            expected_external_readiness_summary_json=expected_external_readiness_summary,
+            expected_external_readiness_strict_summary_json=expected_external_readiness_strict_summary,
+            expected_warning_gate_json=expected_warning_gate,
+            expected_warning_summary_json=expected_warning_summary,
+            expected_warning_gate_summary_json=expected_warning_gate_summary,
+            expected_warning_review_artifacts_only=expected_warning_artifacts,
+            expected_warning_review_next_command_gate=expected_warning_next_gate,
+            expected_warning_action_plan_path=expected_warning_action_plan,
+            expected_warning_operator_checklist_path=expected_warning_checklist,
+            expected_operator_command=expected_operator_command,
+        )
+        clear_warning_by_id = {check["id"]: check for check in clear_warning_checks}
+        self.assertEqual(
+            clear_warning_by_id[
+                "release_status_json_progress_summary_warning_review_pre_approval_sequence"
+            ]["status"],
+            "pass",
+        )
+
         live_beta_payload = json.loads(json.dumps(payload))
         live_beta_payload["progress_summary"]["next_commands_by_owner"]["operator"] = {
             "id": "live_beta_archive",

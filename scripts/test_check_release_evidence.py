@@ -1353,6 +1353,31 @@ class CheckReleaseEvidenceSmokeTests(unittest.TestCase):
 
         self.assertEqual(checks["handoff_release_status_progress_next_step_command"]["status"], "fail")
 
+    def test_command_safety_accepts_final_gate_when_no_remaining_items(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="quant-evidence-check-") as tmp:
+            package_dir = Path(tmp)
+            (package_dir / "release-status.json").write_text(
+                json.dumps(
+                    {
+                        "remaining_items": [],
+                        "progress_summary": {
+                            "remaining_items": 0,
+                            "next_command": None,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (package_dir / "next-release-step.json").write_text(
+                json.dumps({"next_command": self.module.LIVE_BETA_FINAL_GATE_COMMAND}) + "\n",
+                encoding="utf-8",
+            )
+
+            checks = checks_by_id(self.module.check_handoff_command_safety(package_dir))
+
+        self.assertEqual(checks["handoff_release_status_progress_next_step_command"]["status"], "pass")
+
     def test_command_safety_fails_when_progress_snapshot_differs_from_top_level(self) -> None:
         with tempfile.TemporaryDirectory(prefix="quant-evidence-check-") as tmp:
             package_dir = Path(tmp)

@@ -147,6 +147,35 @@ class ReportReleaseStatusSmokeTests(unittest.TestCase):
         self.assertEqual(warning_items["warning_alerts"]["review_artifacts"], expected_review_artifacts)
         self.assertEqual(warning_items["warning_actions"]["review_artifacts"], expected_review_artifacts)
 
+    def test_clear_warning_actions_are_not_remaining_operator_work(self) -> None:
+        package_dir = Path("/tmp/quant-evidence")
+        actions = {
+            "status": "planned",
+            "summary": {
+                "action_needed": False,
+                "planned": 0,
+                "warning_alerts": 0,
+                "failed": 0,
+            },
+        }
+        items = self.module.build_remaining_items(
+            package_dir=package_dir,
+            evidence={"checks": []},
+            external={"checks": []},
+            actions=actions,
+        )
+        estimate = self.module.readiness_estimate(
+            release_gate_status="pass",
+            evidence_checks=[],
+            external_checks=[],
+            actions=actions,
+            remaining_items=items,
+        )
+
+        self.assertEqual(items, [])
+        self.assertFalse(self.module.warning_actions_need_operator_action(actions))
+        self.assertEqual(estimate["percent"], 100)
+
     def test_completion_plan_marks_operator_approval_sequence(self) -> None:
         package_dir = Path("/tmp/quant-evidence")
         items = self.module.build_remaining_items(

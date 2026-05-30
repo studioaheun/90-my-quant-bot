@@ -356,6 +356,15 @@ def warning_actions(package_dir: Path) -> tuple[Path | None, dict[str, Any] | No
     return (path, read_json(path)) if path.exists() else (None, None)
 
 
+def warning_actions_need_operator_action(actions: dict[str, Any] | None) -> bool:
+    if not actions:
+        return False
+    summary = actions.get("summary")
+    if isinstance(summary, dict) and summary.get("action_needed") is False:
+        return False
+    return actions.get("status") in {"planned", "fail"}
+
+
 def warning_review_artifacts(package_dir: Path) -> dict[str, str]:
     return {
         "action_plan": str(package_dir / "release-warning-actions.md"),
@@ -464,7 +473,7 @@ def build_remaining_items(
         )
 
     action_status = actions.get("status") if actions else None
-    if action_status in {"planned", "fail"}:
+    if warning_actions_need_operator_action(actions):
         items.append(
             {
                 "id": "warning_actions",
@@ -689,7 +698,7 @@ def build_next_actions(
                 "Review release-warning-operator-checklist.md and release-warning-actions.md, then apply or acknowledge warning alerts through a running backend when an operator approves."
             )
 
-    if actions and actions.get("status") in {"planned", "fail"}:
+    if warning_actions_need_operator_action(actions):
         next_actions.append("Resolve planned or failed warning actions before final handoff.")
 
     if not next_actions:

@@ -620,6 +620,18 @@ def main() -> int:
                 action["error"] = str(exc)
         actions.append(action)
 
+    live_beta_archive_missing = bool(triage.get("summary", {}).get("live_beta_archive_missing"))
+    planned_count = sum(1 for action in actions if action["status"] == "planned")
+    applied_count = sum(1 for action in actions if action["status"] == "applied")
+    if failures:
+        plan_status = "fail"
+    elif args.apply and actions:
+        plan_status = "applied"
+    elif planned_count or live_beta_archive_missing:
+        plan_status = "planned"
+    else:
+        plan_status = "clear"
+
     plan = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "package_dir": str(package_dir),
@@ -627,18 +639,16 @@ def main() -> int:
         "api_base": args.api_base,
         "mode": "apply" if args.apply else "dry_run",
         "operator_approved": bool(args.operator_approved),
-        "status": "fail" if failures else ("planned" if not args.apply else "applied"),
+        "status": plan_status,
         "json_path": str(output_prefix.with_suffix(".json")),
         "markdown_path": str(output_prefix.with_suffix(".md")),
         "operator_checklist_path": str(output_prefix.parent / "release-warning-operator-checklist.md"),
         "summary": {
             "warning_alerts": len(actions),
-            "planned": sum(1 for action in actions if action["status"] == "planned"),
-            "applied": sum(1 for action in actions if action["status"] == "applied"),
+            "planned": planned_count,
+            "applied": applied_count,
             "failed": failures,
-            "live_beta_archive_missing": bool(
-                triage.get("summary", {}).get("live_beta_archive_missing")
-            ),
+            "live_beta_archive_missing": live_beta_archive_missing,
         },
         "live_beta_archive": triage.get("live_beta_archive", {}),
         "commands": {

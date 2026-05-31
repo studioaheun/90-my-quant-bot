@@ -1280,6 +1280,79 @@ type LivePaperTradingSession = PaperTradingSession & {
   mode?: 'replay' | 'ticker';
 };
 
+type BotOperatingStyle =
+  | 'trend_following'
+  | 'mean_reversion'
+  | 'breakout'
+  | 'portfolio_rotation'
+  | 'defensive_monitor'
+  | 'custom';
+type BotExecutionMode = 'paper' | 'dry_run';
+type BotConflictPolicy = 'allow' | 'block_same_symbol';
+type BotRunStatus = 'completed' | 'halted' | 'blocked' | 'error';
+
+type BotProfile = {
+  id: string;
+  name: string;
+  description: string;
+  operating_style: BotOperatingStyle;
+  request: BacktestRequest & { risk_limits: RiskLimits };
+  execution_mode: BotExecutionMode;
+  interval_minutes: number;
+  active: boolean;
+  priority: number;
+  max_intents_per_run: number;
+  conflict_policy: BotConflictPolicy;
+  created_at: string;
+  updated_at: string;
+  next_run_at: string;
+  last_run_at?: string | null;
+  last_run_id?: string | null;
+  last_session_id?: string | null;
+  last_status?: BotRunStatus | null;
+  last_error?: string | null;
+};
+
+type BotRun = {
+  id: string;
+  bot_id: string;
+  bot_name: string;
+  checked_at: string;
+  status: BotRunStatus;
+  operating_style: BotOperatingStyle;
+  execution_mode: BotExecutionMode;
+  request: BacktestRequest & { risk_limits: RiskLimits };
+  session?: PaperTradingSession | null;
+  queued?: StrategyOrderQueueResponse | null;
+  warnings: string[];
+  errors: string[];
+};
+
+type BotFleetSummary = {
+  total_bots: number;
+  active_bots: number;
+  due_bots: number;
+  paper_bots: number;
+  dry_run_bots: number;
+  open_position_bots: number;
+  active_errors: number;
+  recent_dry_run_intents: number;
+};
+
+type BotFleetStatus = {
+  checked_at: string;
+  summary: BotFleetSummary;
+  profiles: BotProfile[];
+  recent_runs: BotRun[];
+};
+
+type BotFleetRun = {
+  checked_at: string;
+  due: number;
+  runs: BotRun[];
+  errors: string[];
+};
+
 const defaultRequest: BacktestRequest = {
   symbol: 'KRW-BTC',
   timeframe: 'day',
@@ -1357,6 +1430,8 @@ function App() {
   const [portfolioScans, setPortfolioScans] = React.useState<PortfolioResearchScan[]>([]);
   const [portfolioWatchlist, setPortfolioWatchlist] = React.useState<PortfolioResearchWatchlistItem[]>([]);
   const [portfolioPaperWatchlist, setPortfolioPaperWatchlist] = React.useState<PortfolioPaperWatchlistItem[]>([]);
+  const [botFleet, setBotFleet] = React.useState<BotFleetStatus | null>(null);
+  const [botFleetLastRun, setBotFleetLastRun] = React.useState<BotFleetRun | null>(null);
   const [portfolioScenarioName, setPortfolioScenarioName] = React.useState('Core ETF monthly');
   const [portfolioWatchInterval, setPortfolioWatchInterval] = React.useState(60);
   const [portfolioAlertThresholds, setPortfolioAlertThresholds] =
@@ -1486,6 +1561,8 @@ function App() {
   const [portfolioScanLoadingId, setPortfolioScanLoadingId] = React.useState<string | null>(null);
   const [portfolioWatchlistLoading, setPortfolioWatchlistLoading] = React.useState(false);
   const [portfolioPaperWatchlistLoading, setPortfolioPaperWatchlistLoading] = React.useState(false);
+  const [botFleetLoading, setBotFleetLoading] = React.useState(false);
+  const [botFleetRunningId, setBotFleetRunningId] = React.useState<string | null>(null);
   const [orderQueueMessage, setOrderQueueMessage] = React.useState<string | null>(null);
   const [portfolioScenarioMessage, setPortfolioScenarioMessage] = React.useState<string | null>(null);
   const [approvalLoadingId, setApprovalLoadingId] = React.useState<string | null>(null);
@@ -1522,6 +1599,8 @@ function App() {
   const [cutoverDecisionMessage, setCutoverDecisionMessage] = React.useState<string | null>(null);
   const [stockHandoffMessage, setStockHandoffMessage] = React.useState<string | null>(null);
   const [portfolioScenarioError, setPortfolioScenarioError] = React.useState<string | null>(null);
+  const [botFleetError, setBotFleetError] = React.useState<string | null>(null);
+  const [botFleetMessage, setBotFleetMessage] = React.useState<string | null>(null);
   const [paperError, setPaperError] = React.useState<string | null>(null);
   const [portfolioError, setPortfolioError] = React.useState<string | null>(null);
   const [liveError, setLiveError] = React.useState<string | null>(null);
@@ -1638,6 +1717,234 @@ function App() {
       );
     }
   }, []);
+
+  const refreshBotFleet = React.useCallback(async () => {
+    setBotFleetError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/bots/fleet`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.detail ?? `Bot fleet request failed with ${response.status}`);
+      }
+      setBotFleet((await response.json()) as BotFleetStatus);
+    } catch (err) {
+      setBotFleetError(err instanceof Error ? err.message : 'Could not load bot fleet');
+    }
+  }, []);
+
+  const createSampleBotFleet = React.useCallback(async () => {
+    setBotFleetLoading(true);
+    setBotFleetError(null);
+    setBotFleetMessage(null);
+    const profiles = [
+      {
+        name: 'Trend Scout',
+        description: 'Breakout bot for KRW crypto dry-run review.',
+        operating_style: 'breakout',
+        execution_mode: 'dry_run',
+        interval_minutes: 120,
+        active: true,
+        priority: 80,
+        max_intents_per_run: 2,
+        conflict_policy: 'allow',
+        request: {
+          symbol: 'KRW-BTC',
+          timeframe: 'day',
+          source: 'sample',
+          strategy: 'donchian_breakout',
+          initial_cash: 1_000_000,
+          fee_bps: 5,
+          slippage_bps: 2,
+          candle_limit: 180,
+          params: { lookback: 20, exit_lookback: 10 },
+          risk_limits: { ...defaultRiskLimits, max_position_pct: 50 },
+        },
+      },
+      {
+        name: 'Pullback Hunter',
+        description: 'Mean reversion bot for US ETF paper-only sessions.',
+        operating_style: 'mean_reversion',
+        execution_mode: 'paper',
+        interval_minutes: 240,
+        active: true,
+        priority: 60,
+        max_intents_per_run: 3,
+        conflict_policy: 'allow',
+        request: {
+          symbol: 'SPY',
+          timeframe: 'day',
+          source: 'sample_us',
+          strategy: 'rsi_mean_reversion',
+          initial_cash: 100_000,
+          fee_bps: 1,
+          slippage_bps: 1,
+          candle_limit: 180,
+          params: { rsi_window: 14, buy_below: 35, sell_above: 58 },
+          risk_limits: { ...defaultRiskLimits, max_position_pct: 40, max_order_notional: 25_000 },
+        },
+      },
+      {
+        name: 'Crossover Core',
+        description: 'Baseline SMA bot that keeps a conservative BTC paper sleeve.',
+        operating_style: 'trend_following',
+        execution_mode: 'paper',
+        interval_minutes: 360,
+        active: true,
+        priority: 50,
+        max_intents_per_run: 3,
+        conflict_policy: 'allow',
+        request: {
+          symbol: 'KRW-BTC',
+          timeframe: 'day',
+          source: 'sample',
+          strategy: 'sma_crossover',
+          initial_cash: 1_000_000,
+          fee_bps: 5,
+          slippage_bps: 2,
+          candle_limit: 180,
+          params: { fast_window: 10, slow_window: 30 },
+          risk_limits: defaultRiskLimits,
+        },
+      },
+    ];
+    try {
+      const created = await Promise.all(
+        profiles.map(async (profile) => {
+          const response = await fetch(`${API_BASE_URL}/api/bots/profiles`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(profile),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            throw new Error(payload?.detail ?? `Bot profile create failed with ${response.status}`);
+          }
+          return (await response.json()) as BotProfile;
+        }),
+      );
+      setBotFleetMessage(`Created ${created.length} bot profiles.`);
+      await refreshBotFleet();
+    } catch (err) {
+      setBotFleetError(err instanceof Error ? err.message : 'Could not create bot profiles');
+    } finally {
+      setBotFleetLoading(false);
+    }
+  }, [refreshBotFleet]);
+
+  const runDueBotFleet = React.useCallback(async () => {
+    setBotFleetLoading(true);
+    setBotFleetError(null);
+    setBotFleetMessage(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/bots/run-due`, { method: 'POST' });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.detail ?? `Bot fleet run failed with ${response.status}`);
+      }
+      const payload = (await response.json()) as BotFleetRun;
+      setBotFleetLastRun(payload);
+      const latestSession = payload.runs.find((run) => run.session)?.session ?? null;
+      if (latestSession) {
+        setPaperSession(latestSession);
+        setLiveSession(null);
+      }
+      setBotFleetMessage(`Ran ${payload.runs.length} due bot(s); ${payload.errors.length} issue(s).`);
+      await refreshBotFleet();
+    } catch (err) {
+      setBotFleetError(err instanceof Error ? err.message : 'Could not run due bot fleet');
+    } finally {
+      setBotFleetLoading(false);
+    }
+  }, [refreshBotFleet]);
+
+  const runBotProfile = React.useCallback(async (botId: string) => {
+    setBotFleetRunningId(botId);
+    setBotFleetError(null);
+    setBotFleetMessage(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/bots/profiles/${encodeURIComponent(botId)}/run`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.detail ?? `Bot run failed with ${response.status}`);
+      }
+      const run = (await response.json()) as BotRun;
+      setBotFleetLastRun({
+        checked_at: run.checked_at,
+        due: 1,
+        runs: [run],
+        errors: run.errors,
+      });
+      if (run.session) {
+        setPaperSession(run.session);
+        setLiveSession(null);
+      }
+      setBotFleetMessage(`${run.bot_name} finished as ${run.status.replaceAll('_', ' ')}.`);
+      await refreshBotFleet();
+    } catch (err) {
+      setBotFleetError(err instanceof Error ? err.message : 'Could not run bot profile');
+    } finally {
+      setBotFleetRunningId(null);
+    }
+  }, [refreshBotFleet]);
+
+  const pauseBotProfile = React.useCallback(async (botId: string) => {
+    setBotFleetRunningId(botId);
+    setBotFleetError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/bots/profiles/${encodeURIComponent(botId)}/pause`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.detail ?? `Bot pause failed with ${response.status}`);
+      }
+      await refreshBotFleet();
+    } catch (err) {
+      setBotFleetError(err instanceof Error ? err.message : 'Could not pause bot');
+    } finally {
+      setBotFleetRunningId(null);
+    }
+  }, [refreshBotFleet]);
+
+  const resumeBotProfile = React.useCallback(async (botId: string) => {
+    setBotFleetRunningId(botId);
+    setBotFleetError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/bots/profiles/${encodeURIComponent(botId)}/resume`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.detail ?? `Bot resume failed with ${response.status}`);
+      }
+      await refreshBotFleet();
+    } catch (err) {
+      setBotFleetError(err instanceof Error ? err.message : 'Could not resume bot');
+    } finally {
+      setBotFleetRunningId(null);
+    }
+  }, [refreshBotFleet]);
+
+  const deleteBotProfile = React.useCallback(async (botId: string) => {
+    setBotFleetRunningId(botId);
+    setBotFleetError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/bots/profiles/${encodeURIComponent(botId)}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.detail ?? `Bot delete failed with ${response.status}`);
+      }
+      await refreshBotFleet();
+    } catch (err) {
+      setBotFleetError(err instanceof Error ? err.message : 'Could not delete bot');
+    } finally {
+      setBotFleetRunningId(null);
+    }
+  }, [refreshBotFleet]);
 
   const refreshLiveReadiness = React.useCallback(async () => {
     setReadinessLoading(true);
@@ -3918,6 +4225,10 @@ function App() {
   }, [refreshPortfolioLibrary]);
 
   React.useEffect(() => {
+    void refreshBotFleet();
+  }, [refreshBotFleet]);
+
+  React.useEffect(() => {
     void refreshAlertReview();
   }, [refreshAlertReview]);
 
@@ -4687,6 +4998,21 @@ function App() {
 
         <section className="results-stack">
           <MarketTickerPanel ticker={marketTicker} error={tickerError} />
+          <BotFleetPanel
+            fleet={botFleet}
+            lastRun={botFleetLastRun}
+            loading={botFleetLoading}
+            runningId={botFleetRunningId}
+            message={botFleetMessage}
+            error={botFleetError}
+            onRefresh={refreshBotFleet}
+            onCreateSampleFleet={createSampleBotFleet}
+            onRunDue={runDueBotFleet}
+            onRunBot={runBotProfile}
+            onPauseBot={pauseBotProfile}
+            onResumeBot={resumeBotProfile}
+            onDeleteBot={deleteBotProfile}
+          />
           <DataProvidersPanel
             providers={providerStatuses}
             columnarStatus={columnarStatus}
@@ -5013,6 +5339,170 @@ function MarketTickerPanel({
       {error ? <p className="error-message">{error}</p> : null}
     </section>
   );
+}
+
+function BotFleetPanel({
+  fleet,
+  lastRun,
+  loading,
+  runningId,
+  message,
+  error,
+  onRefresh,
+  onCreateSampleFleet,
+  onRunDue,
+  onRunBot,
+  onPauseBot,
+  onResumeBot,
+  onDeleteBot,
+}: {
+  fleet: BotFleetStatus | null;
+  lastRun: BotFleetRun | null;
+  loading: boolean;
+  runningId: string | null;
+  message: string | null;
+  error: string | null;
+  onRefresh: () => void;
+  onCreateSampleFleet: () => void;
+  onRunDue: () => void;
+  onRunBot: (botId: string) => void;
+  onPauseBot: (botId: string) => void;
+  onResumeBot: (botId: string) => void;
+  onDeleteBot: (botId: string) => void;
+}) {
+  const profiles = fleet?.profiles ?? [];
+  const summary = fleet?.summary;
+  const latestRunByBot = new Map((fleet?.recent_runs ?? []).map((run) => [run.bot_id, run]));
+
+  return (
+    <section className="panel bot-fleet-panel">
+      <div className="panel-title">
+        <Radio size={18} />
+        <h2>Bot fleet</h2>
+        <button className="icon-button" onClick={onRefresh} title="Refresh bot fleet">
+          <RefreshCcw size={15} />
+        </button>
+      </div>
+
+      <div className="bot-fleet-summary">
+        <div>
+          <span>Active bots</span>
+          <strong>{summary?.active_bots ?? 0}/{summary?.total_bots ?? 0}</strong>
+        </div>
+        <div>
+          <span>Due now</span>
+          <strong>{summary?.due_bots ?? 0}</strong>
+        </div>
+        <div>
+          <span>Open sleeves</span>
+          <strong>{summary?.open_position_bots ?? 0}</strong>
+        </div>
+        <div>
+          <span>Dry-run intents</span>
+          <strong>{summary?.recent_dry_run_intents ?? 0}</strong>
+        </div>
+      </div>
+
+      <div className="bot-fleet-actions">
+        <button className="secondary-button compact-action" onClick={onCreateSampleFleet} disabled={loading}>
+          <Save size={15} />
+          Seed fleet
+        </button>
+        <button className="run-button compact-action" onClick={onRunDue} disabled={loading || profiles.length === 0}>
+          <Play size={15} />
+          Run due
+        </button>
+      </div>
+
+      <div className="bot-fleet-grid">
+        {profiles.length > 0 ? (
+          profiles.map((profile) => {
+            const latest = latestRunByBot.get(profile.id);
+            const status = latest?.status ?? profile.last_status ?? 'idle';
+            const currency = currencyForSource(profile.request.source);
+            return (
+              <div className="bot-fleet-row" key={profile.id}>
+                <div className="bot-fleet-main">
+                  <div>
+                    <strong>{profile.name}</strong>
+                    <span>{botStyleLabel(profile.operating_style)} · {profile.request.symbol}</span>
+                  </div>
+                  <span className={botStatusClass(status)}>{status.replaceAll('_', ' ')}</span>
+                </div>
+                <div className="bot-fleet-meta">
+                  <span>{profile.request.strategy.replaceAll('_', ' ')}</span>
+                  <span>{profile.execution_mode.replaceAll('_', ' ')}</span>
+                  <span>{money(latest?.session?.summary.final_equity, currency)}</span>
+                  <span>{percent(latest?.session?.summary.total_return_pct)}</span>
+                  <span>{profile.active ? `next ${shortDateTime(profile.next_run_at)}` : 'paused'}</span>
+                </div>
+                {profile.last_error ? <p className="warning-message">{profile.last_error}</p> : null}
+                <div className="bot-fleet-row-actions">
+                  <button
+                    className="secondary-button compact-action"
+                    onClick={() => onRunBot(profile.id)}
+                    disabled={runningId === profile.id}
+                  >
+                    <Play size={14} />
+                    Run
+                  </button>
+                  {profile.active ? (
+                    <button
+                      className="secondary-button compact-action"
+                      onClick={() => onPauseBot(profile.id)}
+                      disabled={runningId === profile.id}
+                    >
+                      <Pause size={14} />
+                      Pause
+                    </button>
+                  ) : (
+                    <button
+                      className="secondary-button compact-action"
+                      onClick={() => onResumeBot(profile.id)}
+                      disabled={runningId === profile.id}
+                    >
+                      <Play size={14} />
+                      Resume
+                    </button>
+                  )}
+                  <button
+                    className="icon-button danger-icon"
+                    onClick={() => onDeleteBot(profile.id)}
+                    disabled={runningId === profile.id}
+                    title={`Delete ${profile.name}`}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="readiness-empty">No bot profiles are configured.</div>
+        )}
+      </div>
+
+      {lastRun ? (
+        <div className="bot-run-strip">
+          <span>Last fleet run</span>
+          <strong>{lastRun.runs.length} bot(s)</strong>
+          <span>{shortDateTime(lastRun.checked_at)}</span>
+        </div>
+      ) : null}
+      {message ? <p className="success-message">{message}</p> : null}
+      {error ? <p className="error-message">{error}</p> : null}
+    </section>
+  );
+}
+
+function botStyleLabel(style: BotOperatingStyle) {
+  return style.replaceAll('_', ' ');
+}
+
+function botStatusClass(status: BotRunStatus | 'idle') {
+  if (status === 'completed') return 'session-status status-completed';
+  if (status === 'halted' || status === 'blocked' || status === 'error') return 'session-status status-halted';
+  return 'session-status status-idle';
 }
 
 function DataProvidersPanel({

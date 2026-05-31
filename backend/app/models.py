@@ -616,6 +616,97 @@ class PortfolioPaperPromotionRequest(BaseModel):
     rules: PortfolioPaperPromotionRules = Field(default_factory=PortfolioPaperPromotionRules)
 
 
+BotOperatingStyle = Literal[
+    "trend_following",
+    "mean_reversion",
+    "breakout",
+    "portfolio_rotation",
+    "defensive_monitor",
+    "custom",
+]
+BotExecutionMode = Literal["paper", "dry_run"]
+BotConflictPolicy = Literal["allow", "block_same_symbol"]
+BotRunStatus = Literal["completed", "halted", "blocked", "error"]
+
+
+class BotProfileCreate(BaseModel):
+    name: str = Field(default="Trend Scout", min_length=1, max_length=80)
+    description: str = Field(
+        default="Runs a paper strategy as an independently monitored bot.",
+        max_length=240,
+    )
+    operating_style: BotOperatingStyle = Field(default="trend_following")
+    request: PaperTradingRequest = Field(default_factory=PaperTradingRequest)
+    execution_mode: BotExecutionMode = Field(default="paper")
+    interval_minutes: int = Field(default=240, ge=1, le=1440)
+    active: bool = True
+    priority: int = Field(default=50, ge=1, le=100)
+    max_intents_per_run: int = Field(default=3, ge=1, le=20)
+    conflict_policy: BotConflictPolicy = Field(default="block_same_symbol")
+
+
+class BotProfile(BaseModel):
+    id: str
+    name: str
+    description: str
+    operating_style: BotOperatingStyle
+    request: PaperTradingRequest
+    execution_mode: BotExecutionMode
+    interval_minutes: int
+    active: bool
+    priority: int
+    max_intents_per_run: int
+    conflict_policy: BotConflictPolicy
+    created_at: str
+    updated_at: str
+    next_run_at: str
+    last_run_at: Optional[str] = None
+    last_run_id: Optional[str] = None
+    last_session_id: Optional[str] = None
+    last_status: Optional[BotRunStatus] = None
+    last_error: Optional[str] = None
+
+
+class BotRun(BaseModel):
+    id: str
+    bot_id: str
+    bot_name: str
+    checked_at: str
+    status: BotRunStatus
+    operating_style: BotOperatingStyle
+    execution_mode: BotExecutionMode
+    request: PaperTradingRequest
+    session: Optional[PaperTradingSession] = None
+    queued: Optional[StrategyOrderQueueResponse] = None
+    warnings: List[str] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+
+
+class BotFleetSummary(BaseModel):
+    total_bots: int
+    active_bots: int
+    due_bots: int
+    paper_bots: int
+    dry_run_bots: int
+    open_position_bots: int
+    active_errors: int
+    recent_dry_run_intents: int
+
+
+class BotFleetStatus(BaseModel):
+    checked_at: str
+    summary: BotFleetSummary
+    profiles: List[BotProfile] = Field(default_factory=list)
+    recent_runs: List[BotRun] = Field(default_factory=list)
+
+
+class BotFleetRun(BaseModel):
+    checked_at: str
+    due: int
+    runs: List[BotRun] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+
+
 class BrokerAdapterContract(BaseModel):
     id: str
     label: str

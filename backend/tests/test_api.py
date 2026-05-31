@@ -26,6 +26,7 @@ from app.main import (  # noqa: E402
     alert_review_store,
     app,
     backtest_run_store,
+    bot_fleet_store,
     broker_intent_evaluation_store,
     broker_order_reconciliation_store,
     paper_fill_order_note_store,
@@ -46,6 +47,7 @@ class ApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
         backtest_run_store.clear()
+        bot_fleet_store.clear()
         broker_intent_evaluation_store.clear()
         broker_order_reconciliation_store.clear()
         paper_fill_order_note_store.clear()
@@ -2013,6 +2015,114 @@ class ApiTests(unittest.TestCase):
             f"/api/research/portfolio/scenarios/{created['id']}",
         )
         self.assertEqual(missing_response.status_code, 404)
+
+    def test_bot_fleet_runs_independent_strategy_profiles(self):
+        trend_response = self.client.post(
+            "/api/bots/profiles",
+            json={
+                "name": "Trend Scout",
+                "description": "Breakout bot for KRW crypto dry-run review.",
+                "operating_style": "breakout",
+                "execution_mode": "dry_run",
+                "interval_minutes": 120,
+                "active": True,
+                "priority": 80,
+                "max_intents_per_run": 2,
+                "conflict_policy": "allow",
+                "request": {
+                    "symbol": "KRW-BTC",
+                    "timeframe": "day",
+                    "source": "sample",
+                    "strategy": "donchian_breakout",
+                    "initial_cash": 1_000_000,
+                    "fee_bps": 5,
+                    "slippage_bps": 2,
+                    "candle_limit": 180,
+                    "params": {"lookback": 20, "exit_lookback": 10},
+                    "risk_limits": {
+                        "max_position_pct": 50,
+                        "max_order_notional": 500_000,
+                        "max_orders": 20,
+                        "max_session_loss_pct": 20,
+                        "kill_switch": False,
+                    },
+                },
+            },
+        )
+        self.assertEqual(trend_response.status_code, 200)
+        trend_bot = trend_response.json()
+
+        reversion_response = self.client.post(
+            "/api/bots/profiles",
+            json={
+                "name": "Pullback Hunter",
+                "description": "US ETF mean reversion bot kept paper-only.",
+                "operating_style": "mean_reversion",
+                "execution_mode": "paper",
+                "interval_minutes": 240,
+                "active": True,
+                "priority": 60,
+                "conflict_policy": "allow",
+                "request": {
+                    "symbol": "SPY",
+                    "timeframe": "day",
+                    "source": "sample_us",
+                    "strategy": "rsi_mean_reversion",
+                    "initial_cash": 100_000,
+                    "fee_bps": 1,
+                    "slippage_bps": 1,
+                    "candle_limit": 180,
+                    "params": {"rsi_window": 14, "buy_below": 35, "sell_above": 58},
+                    "risk_limits": {
+                        "max_position_pct": 40,
+                        "max_order_notional": 25_000,
+                        "max_orders": 20,
+                        "max_session_loss_pct": 12,
+                        "kill_switch": False,
+                    },
+                },
+            },
+        )
+        self.assertEqual(reversion_response.status_code, 200)
+
+        fleet_response = self.client.get("/api/bots/fleet")
+        self.assertEqual(fleet_response.status_code, 200)
+        fleet = fleet_response.json()
+        self.assertEqual(fleet["summary"]["total_bots"], 2)
+        self.assertEqual(fleet["summary"]["active_bots"], 2)
+        self.assertEqual(fleet["summary"]["due_bots"], 2)
+        self.assertEqual(fleet["summary"]["dry_run_bots"], 1)
+
+        due_response = self.client.post("/api/bots/run-due")
+        self.assertEqual(due_response.status_code, 200)
+        due = due_response.json()
+        self.assertEqual(due["due"], 2)
+        self.assertEqual(due["errors"], [])
+        self.assertEqual({run["bot_name"] for run in due["runs"]}, {"Trend Scout", "Pullback Hunter"})
+        trend_run = next(run for run in due["runs"] if run["bot_id"] == trend_bot["id"])
+        self.assertIn(trend_run["status"], ["completed", "halted"])
+        self.assertIsNotNone(trend_run["session"])
+        self.assertIsNotNone(trend_run["queued"])
+        self.assertGreaterEqual(trend_run["queued"]["created"], 0)
+
+        updated_fleet_response = self.client.get("/api/bots/fleet")
+        self.assertEqual(updated_fleet_response.status_code, 200)
+        updated_fleet = updated_fleet_response.json()
+        self.assertEqual(updated_fleet["summary"]["due_bots"], 0)
+        self.assertEqual(len(updated_fleet["recent_runs"]), 2)
+        self.assertGreaterEqual(updated_fleet["summary"]["recent_dry_run_intents"], 0)
+
+        pause_response = self.client.post(f"/api/bots/profiles/{trend_bot['id']}/pause")
+        self.assertEqual(pause_response.status_code, 200)
+        self.assertFalse(pause_response.json()["active"])
+
+        resume_response = self.client.post(f"/api/bots/profiles/{trend_bot['id']}/resume")
+        self.assertEqual(resume_response.status_code, 200)
+        self.assertTrue(resume_response.json()["active"])
+
+        delete_response = self.client.delete(f"/api/bots/profiles/{trend_bot['id']}")
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(delete_response.json()["status"], "deleted")
 
     def test_crypto_paper_watchlist_promotes_to_dry_run_order_intents(self):
         create_response = self.client.post(

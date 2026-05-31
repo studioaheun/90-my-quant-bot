@@ -28,6 +28,7 @@ Current scope:
 - Scheduled scenario scan watchlist with backend due-run support and dashboard controls
 - Scheduled scan alert thresholds for drawdown, total return, average edge, and return drift
 - Portfolio paper watchlist that promotes saved research scenarios into recurring simulated sessions
+- Bot Fleet Operator for running multiple named paper/dry-run bot profiles with different operating styles, strategies, risk limits, and schedules
 - Compact alert review queue for scan threshold alerts, watchlist errors, and paper-session risk events
 - Alert review filters for severity, source, and scenario triage
 - Alert review acknowledgement and dismissal state persisted in SQLite

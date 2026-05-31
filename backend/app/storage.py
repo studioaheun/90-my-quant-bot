@@ -14,6 +14,9 @@ from .models import (
     BacktestResponse,
     BacktestRun,
     BacktestRunSummary,
+    BotProfile,
+    BotProfileCreate,
+    BotRun,
     BrokerOrderIntentEvaluation,
     BrokerOrderReconciliation,
     Candle,
@@ -1070,6 +1073,251 @@ class PortfolioPaperWatchlistStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_portfolio_paper_watchlist_due
                 ON portfolio_paper_watchlist(active, next_run_at ASC)
+                """
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        return conn
+
+
+class BotFleetStore:
+    def __init__(self, db_path: Optional[Path] = None) -> None:
+        self.db_path = Path(db_path) if db_path else default_database_path()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def save_profile(self, create: BotProfileCreate) -> BotProfile:
+        now = _utc_now()
+        profile = BotProfile(
+            id=str(uuid.uuid4()),
+            name=create.name,
+            description=create.description,
+            operating_style=create.operating_style,
+            request=create.request,
+            execution_mode=create.execution_mode,
+            interval_minutes=create.interval_minutes,
+            active=create.active,
+            priority=create.priority,
+            max_intents_per_run=create.max_intents_per_run,
+            conflict_policy=create.conflict_policy,
+            created_at=now,
+            updated_at=now,
+            next_run_at=now if create.active else _next_run_at(now, create.interval_minutes),
+        )
+        self._upsert_profile(profile)
+        return profile
+
+    def get_profile(self, bot_id: str) -> Optional[BotProfile]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM bot_profiles WHERE id = ?",
+                (bot_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return BotProfile.model_validate_json(row["payload"])
+
+    def list_profiles(self, limit: int = 50) -> List[BotProfile]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload
+                FROM bot_profiles
+                ORDER BY active DESC, priority DESC, next_run_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [BotProfile.model_validate_json(row["payload"]) for row in rows]
+
+    def due_profiles(self, now: Optional[str] = None) -> List[BotProfile]:
+        checked_at = now or _utc_now()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload
+                FROM bot_profiles
+                WHERE active = 1 AND next_run_at <= ?
+                ORDER BY priority DESC, next_run_at ASC
+                """,
+                (checked_at,),
+            ).fetchall()
+        return [BotProfile.model_validate_json(row["payload"]) for row in rows]
+
+    def save_run(self, run: BotRun) -> None:
+        session_id = run.session.id if run.session is not None else None
+        queued_count = run.queued.created if run.queued is not None else 0
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO bot_runs
+                    (
+                        id, bot_id, checked_at, status, symbol, strategy,
+                        execution_mode, session_id, queued_count, payload
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    status = excluded.status,
+                    session_id = excluded.session_id,
+                    queued_count = excluded.queued_count,
+                    payload = excluded.payload
+                """,
+                (
+                    run.id,
+                    run.bot_id,
+                    run.checked_at,
+                    run.status,
+                    run.request.symbol,
+                    run.request.strategy,
+                    run.execution_mode,
+                    session_id,
+                    queued_count,
+                    run.model_dump_json(),
+                ),
+            )
+
+    def list_runs(self, limit: int = 20) -> List[BotRun]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload
+                FROM bot_runs
+                ORDER BY checked_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [BotRun.model_validate_json(row["payload"]) for row in rows]
+
+    def record_run(self, profile: BotProfile, run: BotRun) -> BotProfile:
+        now = _utc_now()
+        updated = profile.model_copy(
+            update={
+                "updated_at": now,
+                "next_run_at": _next_run_at(now, profile.interval_minutes),
+                "last_run_at": run.checked_at,
+                "last_run_id": run.id,
+                "last_session_id": run.session.id if run.session is not None else None,
+                "last_status": run.status,
+                "last_error": " ".join(run.errors) if run.errors else None,
+            }
+        )
+        self._upsert_profile(updated)
+        return updated
+
+    def update_profile_active(self, profile: BotProfile, active: bool) -> BotProfile:
+        now = _utc_now()
+        updated = profile.model_copy(
+            update={
+                "active": active,
+                "updated_at": now,
+                "next_run_at": profile.next_run_at if active else _next_run_at(now, profile.interval_minutes),
+            }
+        )
+        self._upsert_profile(updated)
+        return updated
+
+    def delete_profile(self, bot_id: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM bot_profiles WHERE id = ?", (bot_id,))
+            return cursor.rowcount > 0
+
+    def clear(self) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM bot_runs")
+            conn.execute("DELETE FROM bot_profiles")
+
+    def _upsert_profile(self, profile: BotProfile) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO bot_profiles
+                    (
+                        id, name, operating_style, symbol, source, strategy,
+                        execution_mode, active, priority, next_run_at,
+                        last_run_at, last_status, payload
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    operating_style = excluded.operating_style,
+                    symbol = excluded.symbol,
+                    source = excluded.source,
+                    strategy = excluded.strategy,
+                    execution_mode = excluded.execution_mode,
+                    active = excluded.active,
+                    priority = excluded.priority,
+                    next_run_at = excluded.next_run_at,
+                    last_run_at = excluded.last_run_at,
+                    last_status = excluded.last_status,
+                    payload = excluded.payload
+                """,
+                (
+                    profile.id,
+                    profile.name,
+                    profile.operating_style,
+                    profile.request.symbol,
+                    profile.request.source,
+                    profile.request.strategy,
+                    profile.execution_mode,
+                    1 if profile.active else 0,
+                    profile.priority,
+                    profile.next_run_at,
+                    profile.last_run_at,
+                    profile.last_status,
+                    profile.model_dump_json(),
+                ),
+            )
+
+    def _initialize(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bot_profiles (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    operating_style TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    execution_mode TEXT NOT NULL,
+                    active INTEGER NOT NULL,
+                    priority INTEGER NOT NULL,
+                    next_run_at TEXT NOT NULL,
+                    last_run_at TEXT,
+                    last_status TEXT,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_bot_profiles_due
+                ON bot_profiles(active, next_run_at ASC, priority DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bot_runs (
+                    id TEXT PRIMARY KEY,
+                    bot_id TEXT NOT NULL,
+                    checked_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    execution_mode TEXT NOT NULL,
+                    session_id TEXT,
+                    queued_count INTEGER NOT NULL,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_bot_runs_checked_at
+                ON bot_runs(checked_at DESC)
                 """
             )
 

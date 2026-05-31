@@ -51,6 +51,12 @@ from .models import (
     BacktestWalkForwardFold,
     BacktestWalkForwardRequest,
     BacktestWalkForwardResponse,
+    BotFleetRun,
+    BotFleetStatus,
+    BotFleetSummary,
+    BotProfile,
+    BotProfileCreate,
+    BotRun,
     BrokerIntentEvaluationReport,
     BrokerOrderIntentEvaluation,
     BrokerOrderIntentRequest,
@@ -149,6 +155,7 @@ from .portfolio import portfolio_research_presets, run_portfolio_research
 from .storage import (
     AlertReviewStore,
     BacktestRunStore,
+    BotFleetStore,
     BrokerIntentEvaluationStore,
     BrokerOrderReconciliationStore,
     OperatorDecisionStore,
@@ -176,6 +183,7 @@ portfolio_watchlist_store = PortfolioWatchlistStore()
 portfolio_paper_watchlist_store = PortfolioPaperWatchlistStore()
 alert_review_store = AlertReviewStore()
 operator_decision_store = OperatorDecisionStore()
+bot_fleet_store = BotFleetStore()
 session_store = SessionStore()
 live_paper_runtimes = {
     runtime.session.id: runtime for runtime in session_store.list_live_runtimes(limit=200)
@@ -1583,6 +1591,58 @@ def approve_order_audit(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/bots/fleet", response_model=BotFleetStatus)
+def bot_fleet_status() -> BotFleetStatus:
+    return _bot_fleet_status()
+
+
+@app.get("/api/bots/profiles", response_model=list[BotProfile])
+def list_bot_profiles() -> list[BotProfile]:
+    return bot_fleet_store.list_profiles(limit=50)
+
+
+@app.post("/api/bots/profiles", response_model=BotProfile)
+def create_bot_profile(request: BotProfileCreate) -> BotProfile:
+    return bot_fleet_store.save_profile(request)
+
+
+@app.post("/api/bots/profiles/{bot_id}/run", response_model=BotRun)
+def run_bot_profile(bot_id: str) -> BotRun:
+    profile = bot_fleet_store.get_profile(bot_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Bot profile not found")
+    return _run_bot_profile(profile=profile)
+
+
+@app.post("/api/bots/run-due", response_model=BotFleetRun)
+def run_due_bot_profiles() -> BotFleetRun:
+    return _run_due_bot_profiles()
+
+
+@app.post("/api/bots/profiles/{bot_id}/pause", response_model=BotProfile)
+def pause_bot_profile(bot_id: str) -> BotProfile:
+    profile = bot_fleet_store.get_profile(bot_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Bot profile not found")
+    return bot_fleet_store.update_profile_active(profile=profile, active=False)
+
+
+@app.post("/api/bots/profiles/{bot_id}/resume", response_model=BotProfile)
+def resume_bot_profile(bot_id: str) -> BotProfile:
+    profile = bot_fleet_store.get_profile(bot_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Bot profile not found")
+    return bot_fleet_store.update_profile_active(profile=profile, active=True)
+
+
+@app.delete("/api/bots/profiles/{bot_id}")
+def delete_bot_profile(bot_id: str) -> dict[str, str]:
+    deleted = bot_fleet_store.delete_profile(bot_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Bot profile not found")
+    return {"status": "deleted", "id": bot_id}
 
 
 @app.get(
@@ -5623,6 +5683,182 @@ def _portfolio_research_alerts(
     return alerts
 
 
+def _bot_fleet_status() -> BotFleetStatus:
+    checked_at = datetime.now(timezone.utc).isoformat()
+    profiles = bot_fleet_store.list_profiles(limit=50)
+    recent_runs = bot_fleet_store.list_runs(limit=20)
+    latest_runs_by_bot: dict[str, BotRun] = {}
+    for run in recent_runs:
+        latest_runs_by_bot.setdefault(run.bot_id, run)
+
+    summary = BotFleetSummary(
+        total_bots=len(profiles),
+        active_bots=sum(1 for profile in profiles if profile.active),
+        due_bots=sum(1 for profile in profiles if profile.active and profile.next_run_at <= checked_at),
+        paper_bots=sum(1 for profile in profiles if profile.execution_mode == "paper"),
+        dry_run_bots=sum(1 for profile in profiles if profile.execution_mode == "dry_run"),
+        open_position_bots=sum(
+            1
+            for profile in profiles
+            if (latest_run := latest_runs_by_bot.get(profile.id)) is not None
+            and latest_run.session is not None
+            and latest_run.session.summary.open_position_pct > 0
+        ),
+        active_errors=sum(1 for profile in profiles if profile.active and profile.last_error),
+        recent_dry_run_intents=sum(
+            run.queued.created
+            for run in recent_runs
+            if run.queued is not None and run.execution_mode == "dry_run"
+        ),
+    )
+    return BotFleetStatus(
+        checked_at=checked_at,
+        summary=summary,
+        profiles=profiles,
+        recent_runs=recent_runs,
+    )
+
+
+def _run_due_bot_profiles() -> BotFleetRun:
+    checked_at = datetime.now(timezone.utc).isoformat()
+    due_profiles = bot_fleet_store.due_profiles(now=checked_at)
+    runs: list[BotRun] = []
+    errors: list[str] = []
+
+    for profile in due_profiles:
+        run = _run_bot_profile(profile=profile, checked_at=checked_at)
+        runs.append(run)
+        errors.extend(run.errors)
+
+    return BotFleetRun(
+        checked_at=checked_at,
+        due=len(due_profiles),
+        runs=runs,
+        errors=errors,
+    )
+
+
+def _run_bot_profile(
+    profile: BotProfile,
+    checked_at: Optional[str] = None,
+) -> BotRun:
+    run_checked_at = checked_at or datetime.now(timezone.utc).isoformat()
+    run_id = str(uuid.uuid4())
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    conflict = _bot_profile_conflict(profile)
+    if conflict:
+        errors.append(conflict)
+        run = BotRun(
+            id=run_id,
+            bot_id=profile.id,
+            bot_name=profile.name,
+            checked_at=run_checked_at,
+            status="blocked",
+            operating_style=profile.operating_style,
+            execution_mode=profile.execution_mode,
+            request=profile.request,
+            errors=errors,
+        )
+        bot_fleet_store.save_run(run)
+        bot_fleet_store.record_run(profile=profile, run=run)
+        return run
+
+    try:
+        candles = get_candles(
+            symbol=profile.request.symbol,
+            timeframe=profile.request.timeframe,
+            source=profile.request.source,
+            limit=profile.request.candle_limit,
+        )
+        session = run_paper_session(request=profile.request, candles=candles)
+        _annotate_paper_session_warnings(session=session, candle_count=len(candles))
+        session.warnings.append(
+            f"Generated by bot profile {profile.name} ({profile.operating_style.replace('_', ' ')})."
+        )
+        session_store.save_paper_session(session)
+        warnings.extend(session.warnings)
+
+        queued: Optional[StrategyOrderQueueResponse] = None
+        status: Literal["completed", "halted", "blocked", "error"] = (
+            "halted" if session.summary.status == "halted" else "completed"
+        )
+        if profile.execution_mode == "dry_run":
+            try:
+                queued = queue_strategy_order_intents(
+                    session=session,
+                    audit_store=order_audit_store,
+                    source="paper_session",
+                    max_intents=profile.max_intents_per_run,
+                    context=_bot_profile_run_context(profile=profile, run_id=run_id),
+                )
+            except ValueError as exc:
+                status = "blocked"
+                errors.append(str(exc))
+
+        run = BotRun(
+            id=run_id,
+            bot_id=profile.id,
+            bot_name=profile.name,
+            checked_at=run_checked_at,
+            status=status,
+            operating_style=profile.operating_style,
+            execution_mode=profile.execution_mode,
+            request=profile.request,
+            session=session,
+            queued=queued,
+            warnings=warnings,
+            errors=errors,
+        )
+    except (MarketDataError, ValueError) as exc:
+        run = BotRun(
+            id=run_id,
+            bot_id=profile.id,
+            bot_name=profile.name,
+            checked_at=run_checked_at,
+            status="error",
+            operating_style=profile.operating_style,
+            execution_mode=profile.execution_mode,
+            request=profile.request,
+            errors=[str(exc)],
+        )
+
+    bot_fleet_store.save_run(run)
+    bot_fleet_store.record_run(profile=profile, run=run)
+    return run
+
+
+def _bot_profile_run_context(profile: BotProfile, run_id: str) -> dict[str, object]:
+    return {
+        "source": "bot_fleet_profile",
+        "bot_profile_id": profile.id,
+        "bot_run_id": run_id,
+        "bot_name": profile.name,
+        "operating_style": profile.operating_style,
+        "execution_mode": profile.execution_mode,
+        "priority": profile.priority,
+        "conflict_policy": profile.conflict_policy,
+    }
+
+
+def _bot_profile_conflict(profile: BotProfile) -> Optional[str]:
+    if profile.conflict_policy == "allow":
+        return None
+    for run in bot_fleet_store.list_runs(limit=50):
+        if run.bot_id == profile.id or run.session is None:
+            continue
+        if run.request.symbol != profile.request.symbol:
+            continue
+        if run.session.summary.open_position_pct <= 0:
+            continue
+        return (
+            f"{profile.request.symbol} is already occupied by {run.bot_name}; "
+            "set conflict_policy=allow if these bots should share the same symbol."
+        )
+    return None
+
+
 def _run_due_portfolio_paper_watchlist() -> PortfolioPaperSchedulerRun:
     checked_at = datetime.now(timezone.utc).isoformat()
     due_items = portfolio_paper_watchlist_store.due_items(now=checked_at)
@@ -5975,6 +6211,7 @@ def _research_scheduler_loop() -> None:
         try:
             _run_due_portfolio_watchlist()
             _run_due_portfolio_paper_watchlist()
+            _run_due_bot_profiles()
         except Exception:
             pass
         _scheduler_stop.wait(_research_scheduler_poll_seconds())

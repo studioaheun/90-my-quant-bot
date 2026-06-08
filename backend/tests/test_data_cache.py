@@ -110,6 +110,41 @@ class MarketDataCacheTests(unittest.TestCase):
             conn.close()
         self.assertEqual(parquet_rows, 4)
 
+    def test_columnar_cache_deduplicates_incoming_candles_by_key(self):
+        candles = _candles(3)
+        duplicate = candles[1].model_copy(update={"close": 250, "volume": 99})
+        self.store.save_candles(
+            source="upbit",
+            symbol="KRW-BTC",
+            timeframe="day",
+            candles=[candles[0], candles[1], duplicate, candles[2]],
+        )
+
+        status = self.store.columnar_status()
+        self.assertTrue(status.enabled)
+        self.assertEqual(status.rows, 3)
+        self.assertIsNone(status.last_error)
+
+        import duckdb
+
+        conn = duckdb.connect(str(self.duckdb_path))
+        try:
+            row = conn.execute(
+                """
+                SELECT close, volume
+                FROM market_candles
+                WHERE source = 'upbit'
+                    AND symbol = 'KRW-BTC'
+                    AND timeframe = 'day'
+                    AND timestamp = ?
+                """,
+                [candles[1].timestamp],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(row, (250, 99))
+
     def test_upbit_candles_use_cache_after_first_fetch(self):
         calls = []
         original_fetch = data.fetch_upbit_candles

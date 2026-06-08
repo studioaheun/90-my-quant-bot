@@ -1993,6 +1993,7 @@ class ColumnarMarketDataStore:
         resolved_fetched_at = fetched_at or _utc_now()
         rows = [
             (
+                index,
                 source,
                 symbol,
                 timeframe,
@@ -2004,7 +2005,7 @@ class ColumnarMarketDataStore:
                 candle.volume,
                 resolved_fetched_at,
             )
-            for candle in candles
+            for index, candle in enumerate(candles)
         ]
 
         conn = self._connect()
@@ -2013,6 +2014,7 @@ class ColumnarMarketDataStore:
             conn.execute(
                 """
                 CREATE TEMP TABLE incoming_market_candles (
+                    incoming_order BIGINT NOT NULL,
                     source VARCHAR NOT NULL,
                     symbol VARCHAR NOT NULL,
                     timeframe VARCHAR NOT NULL,
@@ -2030,22 +2032,13 @@ class ColumnarMarketDataStore:
                 """
                 INSERT INTO incoming_market_candles
                     (
+                        incoming_order,
                         source, symbol, timeframe, timestamp,
                         open, high, low, close, volume, fetched_at
                     )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
-            )
-            conn.execute(
-                """
-                DELETE FROM market_candles AS existing
-                USING incoming_market_candles AS incoming
-                WHERE existing.source = incoming.source
-                    AND existing.symbol = incoming.symbol
-                    AND existing.timeframe = incoming.timeframe
-                    AND existing.timestamp = incoming.timestamp
-                """
             )
             conn.execute(
                 """
@@ -2057,7 +2050,23 @@ class ColumnarMarketDataStore:
                 SELECT
                     source, symbol, timeframe, timestamp,
                     open, high, low, close, volume, fetched_at
-                FROM incoming_market_candles
+                FROM (
+                    SELECT
+                        *,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY source, symbol, timeframe, timestamp
+                            ORDER BY incoming_order DESC
+                        ) AS duplicate_rank
+                    FROM incoming_market_candles
+                )
+                WHERE duplicate_rank = 1
+                ON CONFLICT(source, symbol, timeframe, timestamp) DO UPDATE SET
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    volume = excluded.volume,
+                    fetched_at = excluded.fetched_at
                 """
             )
             conn.execute("COMMIT")

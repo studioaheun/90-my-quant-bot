@@ -4711,6 +4711,15 @@ function App() {
     });
   }, []);
 
+  const changeMarketSymbol = React.useCallback((symbol: string) => {
+    setRequest((current) => ({
+      ...current,
+      symbol,
+    }));
+    setMarketTicker(null);
+    setTickerError(null);
+  }, []);
+
   const comparisonRuns = selectedCompareIds
     .map((id) => backtestRuns.find((run) => run.id === id))
     .filter((run): run is BacktestRunSummary => Boolean(run));
@@ -4748,7 +4757,12 @@ function App() {
             error={tickerError}
             providers={providerStatuses}
             columnarStatus={columnarStatus}
+            source={request.source}
+            symbol={request.symbol}
+            symbols={currentSymbols}
             onRefresh={refreshTicker}
+            onSourceChange={changeSource}
+            onSymbolChange={changeMarketSymbol}
           />
           <BotFleetPanel
             fleet={botFleet}
@@ -5061,16 +5075,31 @@ function MarketTickerPanel({
   error,
   providers,
   columnarStatus,
+  source,
+  symbol,
+  symbols,
   onRefresh,
+  onSourceChange,
+  onSymbolChange,
 }: {
   ticker: MarketTicker | null;
   error: string | null;
   providers: MarketDataProviderStatus[];
   columnarStatus: MarketDataColumnarStatus | null;
+  source: Source;
+  symbol: string;
+  symbols: string[];
   onRefresh: () => void;
+  onSourceChange: (source: Source) => void;
+  onSymbolChange: (symbol: string) => void;
 }) {
-  const changeClass = ticker && ticker.change_pct < 0 ? 'ticker-negative' : 'ticker-positive';
-  const provider = ticker ? providers.find((item) => item.source === ticker.source) : null;
+  const activeTicker = ticker?.source === source && ticker.symbol === symbol ? ticker : null;
+  const changeClass = activeTicker
+    ? activeTicker.change_pct < 0
+      ? 'ticker-negative'
+      : 'ticker-positive'
+    : 'ticker-neutral';
+  const provider = providers.find((item) => item.source === source) ?? null;
   const providerState = provider?.available ? 'ready' : provider?.configured ? 'blocked' : 'missing';
   const providerLabel = provider
     ? provider.available
@@ -5079,9 +5108,9 @@ function MarketTickerPanel({
         ? '확인 필요'
         : '설정 필요'
     : '대기 중';
-  const marketSourceLabel = ticker ? sourceLabelKo(ticker.source) : '소스 대기';
-  const volumeLabel = ticker?.quote_volume_24h ? '거래대금' : '거래량';
-  const volumeDisplay = tickerVolumeDisplay(ticker);
+  const marketSourceLabel = sourceLabelKo(source);
+  const volumeLabel = activeTicker?.quote_volume_24h ? '거래대금' : '거래량';
+  const volumeDisplay = tickerVolumeDisplay(activeTicker);
 
   return (
     <section className="panel ticker-panel">
@@ -5099,22 +5128,48 @@ function MarketTickerPanel({
           캐시 {columnarStatus?.enabled ? `${columnarStatus.rows.toLocaleString()}행` : '꺼짐'}
         </span>
       </div>
+      <div className="ticker-control-row">
+        <label className="ticker-field">
+          <span>데이터 소스</span>
+          <select value={source} onChange={(event) => onSourceChange(event.target.value as Source)}>
+            {sourceOptions.map((option) => (
+              <option value={option.value} key={option.value}>
+                {sourceLabelKo(option.value)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="ticker-field">
+          <span>종목</span>
+          <select value={symbol} onChange={(event) => onSymbolChange(event.target.value)}>
+            {symbols.map((item) => (
+              <option value={item} key={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="secondary-button ticker-refresh-button" onClick={onRefresh} type="button">
+          <RefreshCcw size={15} />
+          시세 확인
+        </button>
+      </div>
       <div className="ticker-grid">
         <div>
           <span>종목</span>
-          <strong>{ticker?.symbol ?? '-'}</strong>
+          <strong>{activeTicker?.symbol ?? symbol}</strong>
         </div>
         <div>
           <span>현재가</span>
-          <strong>{money(ticker?.price, currencyForSource(ticker?.source ?? 'sample'))}</strong>
+          <strong>{money(activeTicker?.price, currencyForSource(source))}</strong>
         </div>
         <div>
           <span>24H 변동</span>
-          <strong className={changeClass}>{percent(ticker?.change_pct)}</strong>
+          <strong className={changeClass}>{percent(activeTicker?.change_pct)}</strong>
         </div>
         <div>
           <span>갱신 시각</span>
-          <strong>{ticker ? shortDateTime(ticker.timestamp) : '-'}</strong>
+          <strong>{activeTicker ? shortDateTime(activeTicker.timestamp) : '-'}</strong>
         </div>
         <div>
           <span>{volumeLabel}</span>

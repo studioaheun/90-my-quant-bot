@@ -627,6 +627,13 @@ BotOperatingStyle = Literal[
 BotExecutionMode = Literal["paper", "dry_run"]
 BotConflictPolicy = Literal["allow", "block_same_symbol"]
 BotRunStatus = Literal["completed", "halted", "blocked", "error"]
+BotAvatarStyle = Literal["pixel_art", "pixel_art_neutral", "bottts", "identicon"]
+
+
+class BotAvatar(BaseModel):
+    seed: str = Field(default="", max_length=120)
+    style: BotAvatarStyle = Field(default="pixel_art")
+    accent_color: str = Field(default="#2f9b73", max_length=16)
 
 
 class BotProfileCreate(BaseModel):
@@ -643,6 +650,7 @@ class BotProfileCreate(BaseModel):
     priority: int = Field(default=50, ge=1, le=100)
     max_intents_per_run: int = Field(default=3, ge=1, le=20)
     conflict_policy: BotConflictPolicy = Field(default="block_same_symbol")
+    avatar: Optional[BotAvatar] = None
 
 
 class BotProfile(BaseModel):
@@ -657,6 +665,7 @@ class BotProfile(BaseModel):
     priority: int
     max_intents_per_run: int
     conflict_policy: BotConflictPolicy
+    avatar: BotAvatar = Field(default_factory=BotAvatar)
     created_at: str
     updated_at: str
     next_run_at: str

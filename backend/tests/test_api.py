@@ -2051,6 +2051,9 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(trend_response.status_code, 200)
         trend_bot = trend_response.json()
+        self.assertEqual(trend_bot["avatar"]["style"], "bottts")
+        self.assertTrue(trend_bot["avatar"]["seed"].startswith("breakout:Trend Scout:"))
+        self.assertEqual(trend_bot["avatar"]["accent_color"], "#d59a25")
 
         reversion_response = self.client.post(
             "/api/bots/profiles",
@@ -2063,6 +2066,11 @@ class ApiTests(unittest.TestCase):
                 "active": True,
                 "priority": 60,
                 "conflict_policy": "allow",
+                "avatar": {
+                    "seed": "pullback-hunter-v1",
+                    "style": "pixel_art_neutral",
+                    "accent_color": "#5d84be",
+                },
                 "request": {
                     "symbol": "SPY",
                     "timeframe": "day",
@@ -2084,6 +2092,9 @@ class ApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(reversion_response.status_code, 200)
+        reversion_bot = reversion_response.json()
+        self.assertEqual(reversion_bot["avatar"]["seed"], "pullback-hunter-v1")
+        self.assertEqual(reversion_bot["avatar"]["style"], "pixel_art_neutral")
 
         fleet_response = self.client.get("/api/bots/fleet")
         self.assertEqual(fleet_response.status_code, 200)
@@ -2092,6 +2103,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(fleet["summary"]["active_bots"], 2)
         self.assertEqual(fleet["summary"]["due_bots"], 2)
         self.assertEqual(fleet["summary"]["dry_run_bots"], 1)
+        self.assertEqual(
+            {profile["avatar"]["style"] for profile in fleet["profiles"]},
+            {"bottts", "pixel_art_neutral"},
+        )
 
         due_response = self.client.post("/api/bots/run-due")
         self.assertEqual(due_response.status_code, 200)

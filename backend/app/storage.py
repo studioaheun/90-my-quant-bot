@@ -14,6 +14,7 @@ from .models import (
     BacktestResponse,
     BacktestRun,
     BacktestRunSummary,
+    BotAvatar,
     BotProfile,
     BotProfileCreate,
     BotRun,
@@ -43,6 +44,15 @@ from .paper import LivePaperRuntime, PaperState
 
 
 DEFAULT_CANDLE_CACHE_TTL_SECONDS = 300
+
+_BOT_AVATAR_DEFAULTS = {
+    "trend_following": ("pixel_art", "#2f9b73"),
+    "mean_reversion": ("pixel_art_neutral", "#5d84be"),
+    "breakout": ("bottts", "#d59a25"),
+    "portfolio_rotation": ("identicon", "#6d76d9"),
+    "defensive_monitor": ("identicon", "#64748b"),
+    "custom": ("pixel_art", "#8b5cf6"),
+}
 
 
 def default_database_path() -> Path:
@@ -90,6 +100,32 @@ def _next_run_at(start_at: str, interval_minutes: int) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return (parsed + timedelta(minutes=interval_minutes)).isoformat()
+
+
+def _default_bot_avatar(style: str, name: str, bot_id: str) -> BotAvatar:
+    avatar_style, accent_color = _BOT_AVATAR_DEFAULTS.get(style, _BOT_AVATAR_DEFAULTS["custom"])
+    return BotAvatar(
+        seed=f"{style}:{name}:{bot_id}",
+        style=avatar_style,
+        accent_color=accent_color,
+    )
+
+
+def _bot_avatar_for_create(create: BotProfileCreate, bot_id: str) -> BotAvatar:
+    if create.avatar is None:
+        return _default_bot_avatar(create.operating_style, create.name, bot_id)
+    seed = create.avatar.seed.strip() or f"{create.operating_style}:{create.name}:{bot_id}"
+    return create.avatar.model_copy(update={"seed": seed})
+
+
+def _hydrate_bot_profile_avatar(profile: BotProfile) -> BotProfile:
+    if profile.avatar.seed.strip():
+        return profile
+    return profile.model_copy(
+        update={
+            "avatar": _default_bot_avatar(profile.operating_style, profile.name, profile.id),
+        }
+    )
 
 
 class SessionStore:
@@ -1090,8 +1126,9 @@ class BotFleetStore:
 
     def save_profile(self, create: BotProfileCreate) -> BotProfile:
         now = _utc_now()
+        bot_id = str(uuid.uuid4())
         profile = BotProfile(
-            id=str(uuid.uuid4()),
+            id=bot_id,
             name=create.name,
             description=create.description,
             operating_style=create.operating_style,
@@ -1102,6 +1139,7 @@ class BotFleetStore:
             priority=create.priority,
             max_intents_per_run=create.max_intents_per_run,
             conflict_policy=create.conflict_policy,
+            avatar=_bot_avatar_for_create(create, bot_id),
             created_at=now,
             updated_at=now,
             next_run_at=now if create.active else _next_run_at(now, create.interval_minutes),
@@ -1117,7 +1155,7 @@ class BotFleetStore:
             ).fetchone()
         if row is None:
             return None
-        return BotProfile.model_validate_json(row["payload"])
+        return _hydrate_bot_profile_avatar(BotProfile.model_validate_json(row["payload"]))
 
     def list_profiles(self, limit: int = 50) -> List[BotProfile]:
         with self._connect() as conn:
@@ -1130,7 +1168,7 @@ class BotFleetStore:
                 """,
                 (limit,),
             ).fetchall()
-        return [BotProfile.model_validate_json(row["payload"]) for row in rows]
+        return [_hydrate_bot_profile_avatar(BotProfile.model_validate_json(row["payload"])) for row in rows]
 
     def due_profiles(self, now: Optional[str] = None) -> List[BotProfile]:
         checked_at = now or _utc_now()
@@ -1144,7 +1182,7 @@ class BotFleetStore:
                 """,
                 (checked_at,),
             ).fetchall()
-        return [BotProfile.model_validate_json(row["payload"]) for row in rows]
+        return [_hydrate_bot_profile_avatar(BotProfile.model_validate_json(row["payload"])) for row in rows]
 
     def save_run(self, run: BotRun) -> None:
         session_id = run.session.id if run.session is not None else None

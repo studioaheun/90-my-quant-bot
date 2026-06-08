@@ -85,6 +85,15 @@ Current scope:
 
 ## Run locally
 
+Start backend, frontend, and browser together:
+
+```bash
+python3 scripts/run_local_app.py
+```
+
+Use `Ctrl+C` in that terminal to stop the managed backend/frontend processes. Pass `--no-browser`
+when you only want to start the services without opening a browser.
+
 Backend:
 
 ```bash
@@ -253,6 +262,14 @@ Useful API routes:
 - `POST /api/paper/watchlist/{item_id}/run`
 - `POST /api/paper/watchlist/{item_id}/promote-order-intents`
 - `DELETE /api/paper/watchlist/{item_id}`
+- `GET /api/bots/fleet`
+- `GET /api/bots/profiles`
+- `POST /api/bots/profiles`
+- `POST /api/bots/run-due`
+- `POST /api/bots/profiles/{bot_id}/run`
+- `POST /api/bots/profiles/{bot_id}/pause`
+- `POST /api/bots/profiles/{bot_id}/resume`
+- `DELETE /api/bots/profiles/{bot_id}`
 - `GET /api/backtests/runs`
 - `GET /api/backtests/runs/{run_id}`
 - `GET /api/execution/status`
@@ -307,3 +324,4 @@ npm run build
 
 See [docs/quant-trading-proposal.md](docs/quant-trading-proposal.md) for the product direction and asset-class recommendation.
 See [docs/quant-lab-guide.md](docs/quant-lab-guide.md) for the current runbook, safety checklist, and recommended next work.
+See [docs/bot-run-guide-ko.md](docs/bot-run-guide-ko.md) for the Korean Bot Fleet execution guide.

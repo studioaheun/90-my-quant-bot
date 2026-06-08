@@ -1,5 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { createAvatar } from '@dicebear/core';
+import { bottts, identicon, pixelArt, pixelArtNeutral } from '@dicebear/collection';
 import {
   Activity,
   AlertTriangle,
@@ -11,6 +13,7 @@ import {
   Moon,
   Pause,
   Play,
+  Plus,
   Radio,
   RefreshCcw,
   Save,
@@ -19,6 +22,7 @@ import {
   Sun,
   Trash2,
   TrendingUp,
+  X,
 } from 'lucide-react';
 import './styles.css';
 
@@ -1290,6 +1294,17 @@ type BotOperatingStyle =
 type BotExecutionMode = 'paper' | 'dry_run';
 type BotConflictPolicy = 'allow' | 'block_same_symbol';
 type BotRunStatus = 'completed' | 'halted' | 'blocked' | 'error';
+type BotAvatarStyle = 'pixel_art' | 'pixel_art_neutral' | 'bottts' | 'identicon';
+type BotVisualStatus = BotRunStatus | 'idle' | 'paused' | 'running';
+type BotDetailTab = 'overview' | 'backtest';
+type BotFleetStatusFilter = 'all' | 'active' | 'paused' | 'running' | 'completed' | 'attention';
+type BotFleetSortKey = 'priority' | 'return' | 'capital' | 'schedule' | 'name';
+
+type BotAvatar = {
+  seed: string;
+  style: BotAvatarStyle;
+  accent_color: string;
+};
 
 type BotProfile = {
   id: string;
@@ -1303,6 +1318,7 @@ type BotProfile = {
   priority: number;
   max_intents_per_run: number;
   conflict_policy: BotConflictPolicy;
+  avatar: BotAvatar;
   created_at: string;
   updated_at: string;
   next_run_at: string;
@@ -1311,6 +1327,26 @@ type BotProfile = {
   last_session_id?: string | null;
   last_status?: BotRunStatus | null;
   last_error?: string | null;
+};
+
+type BotProfileCreate = {
+  name: string;
+  description: string;
+  operating_style: BotOperatingStyle;
+  request: BacktestRequest & { risk_limits: RiskLimits };
+  execution_mode: BotExecutionMode;
+  interval_minutes: number;
+  active: boolean;
+  priority: number;
+  max_intents_per_run: number;
+  conflict_policy: BotConflictPolicy;
+  avatar?: BotAvatar;
+};
+
+type BotPreset = BotProfileCreate & {
+  id: string;
+  persona: string;
+  summary: string;
 };
 
 type BotRun = {
@@ -1373,6 +1409,210 @@ const defaultRiskLimits: RiskLimits = {
   kill_switch: false,
 };
 
+const botPresets: BotPreset[] = [
+  {
+    id: 'trend-watchdog',
+    name: '추세 추종 감시자',
+    persona: '강한 흐름을 따라가되 과열과 손실 제한을 함께 감시합니다.',
+    summary: '코인 돌파 흐름을 드라이런 주문 intent까지 연결하는 기본 모멘텀 봇입니다.',
+    description: 'KRW crypto 돌파 흐름을 추적하고 리스크 한도 안에서 dry-run intent를 남깁니다.',
+    operating_style: 'breakout',
+    execution_mode: 'dry_run',
+    interval_minutes: 120,
+    active: true,
+    priority: 80,
+    max_intents_per_run: 2,
+    conflict_policy: 'allow',
+    avatar: { seed: 'trend-watchdog-breakout-v1', style: 'bottts', accent_color: '#d59a25' },
+    request: {
+      symbol: 'KRW-BTC',
+      timeframe: 'day',
+      source: 'sample',
+      strategy: 'donchian_breakout',
+      initial_cash: 1_000_000,
+      fee_bps: 5,
+      slippage_bps: 2,
+      candle_limit: 180,
+      params: { lookback: 20, exit_lookback: 10 },
+      risk_limits: { ...defaultRiskLimits, max_position_pct: 50 },
+    },
+  },
+  {
+    id: 'pullback-catcher',
+    name: '되돌림 포착가',
+    persona: '과매도 구간에서 반등 가능성을 기다리는 역추세형 운용자입니다.',
+    summary: 'ETF/대형주 paper 세션에서 RSI 되돌림 신호를 조심스럽게 확인합니다.',
+    description: 'US ETF mean reversion을 paper-only로 실행해 과매도 반등 후보를 관찰합니다.',
+    operating_style: 'mean_reversion',
+    execution_mode: 'paper',
+    interval_minutes: 240,
+    active: true,
+    priority: 60,
+    max_intents_per_run: 3,
+    conflict_policy: 'allow',
+    avatar: { seed: 'pullback-catcher-v1', style: 'pixel_art_neutral', accent_color: '#5d84be' },
+    request: {
+      symbol: 'SPY',
+      timeframe: 'day',
+      source: 'sample_us',
+      strategy: 'rsi_mean_reversion',
+      initial_cash: 100_000,
+      fee_bps: 1,
+      slippage_bps: 1,
+      candle_limit: 180,
+      params: { rsi_window: 14, buy_below: 35, sell_above: 58 },
+      risk_limits: { ...defaultRiskLimits, max_position_pct: 40, max_order_notional: 25_000 },
+    },
+  },
+  {
+    id: 'core-crossover',
+    name: '코어 크로스오버',
+    persona: '복잡한 신호보다 기준선과 꾸준함을 선호하는 보수형 봇입니다.',
+    summary: 'SMA 교차 신호로 BTC paper sleeve를 안정적으로 관찰합니다.',
+    description: 'Baseline SMA crossover로 장기 기준선 이탈과 회복을 확인합니다.',
+    operating_style: 'trend_following',
+    execution_mode: 'paper',
+    interval_minutes: 360,
+    active: true,
+    priority: 50,
+    max_intents_per_run: 3,
+    conflict_policy: 'allow',
+    avatar: { seed: 'core-crossover-v1', style: 'pixel_art', accent_color: '#2f9b73' },
+    request: {
+      symbol: 'KRW-BTC',
+      timeframe: 'day',
+      source: 'sample',
+      strategy: 'sma_crossover',
+      initial_cash: 1_000_000,
+      fee_bps: 5,
+      slippage_bps: 2,
+      candle_limit: 180,
+      params: { fast_window: 10, slow_window: 30 },
+      risk_limits: defaultRiskLimits,
+    },
+  },
+  {
+    id: 'volatility-breakout',
+    name: '변동성 돌파 사냥꾼',
+    persona: '짧은 기회만 선별하고 포지션 크기를 낮게 유지하는 공격형 실험 봇입니다.',
+    summary: 'SOL처럼 변동성이 큰 자산에서 더 빠른 돌파/청산 구간을 테스트합니다.',
+    description: '고변동 crypto 돌파 신호를 작은 주문 한도로 실험합니다.',
+    operating_style: 'breakout',
+    execution_mode: 'dry_run',
+    interval_minutes: 90,
+    active: true,
+    priority: 70,
+    max_intents_per_run: 2,
+    conflict_policy: 'allow',
+    avatar: { seed: 'volatility-breakout-v1', style: 'bottts', accent_color: '#d14d35' },
+    request: {
+      symbol: 'KRW-SOL',
+      timeframe: 'day',
+      source: 'sample',
+      strategy: 'donchian_breakout',
+      initial_cash: 1_000_000,
+      fee_bps: 5,
+      slippage_bps: 3,
+      candle_limit: 180,
+      params: { lookback: 14, exit_lookback: 7 },
+      risk_limits: { ...defaultRiskLimits, max_position_pct: 35, max_order_notional: 300_000 },
+    },
+  },
+  {
+    id: 'margin-manager',
+    name: '안전마진 관리자',
+    persona: '수익보다 손실 제한, 낮은 노출, 운영 안정성을 먼저 보는 방어형 봇입니다.',
+    summary: 'US ETF paper-only로 낮은 포지션 비중과 엄격한 손실 중단선을 적용합니다.',
+    description: '낮은 노출의 SMA paper session으로 리스크 감시 중심 운영을 수행합니다.',
+    operating_style: 'defensive_monitor',
+    execution_mode: 'paper',
+    interval_minutes: 480,
+    active: true,
+    priority: 45,
+    max_intents_per_run: 1,
+    conflict_policy: 'block_same_symbol',
+    avatar: { seed: 'margin-manager-v1', style: 'identicon', accent_color: '#64748b' },
+    request: {
+      symbol: 'SPY',
+      timeframe: 'day',
+      source: 'sample_us',
+      strategy: 'sma_crossover',
+      initial_cash: 100_000,
+      fee_bps: 1,
+      slippage_bps: 1,
+      candle_limit: 180,
+      params: { fast_window: 20, slow_window: 60 },
+      risk_limits: {
+        ...defaultRiskLimits,
+        max_position_pct: 25,
+        max_order_notional: 15_000,
+        max_orders: 10,
+        max_session_loss_pct: 8,
+      },
+    },
+  },
+  {
+    id: 'tenbagger-scout',
+    name: '텐배거 탐색가',
+    persona: '긴 호흡의 성장 후보를 찾되 아직은 paper로만 검증하는 성장형 봇입니다.',
+    summary: 'QQQ/NVDA류 성장 자산의 추세 신호를 paper 환경에서 관찰합니다.',
+    description: '성장형 US equity 후보를 paper-only 추세 전략으로 추적합니다.',
+    operating_style: 'portfolio_rotation',
+    execution_mode: 'paper',
+    interval_minutes: 360,
+    active: true,
+    priority: 55,
+    max_intents_per_run: 2,
+    conflict_policy: 'allow',
+    avatar: { seed: 'tenbagger-scout-v1', style: 'pixel_art', accent_color: '#6d76d9' },
+    request: {
+      symbol: 'NVDA',
+      timeframe: 'day',
+      source: 'sample_us',
+      strategy: 'donchian_breakout',
+      initial_cash: 100_000,
+      fee_bps: 1,
+      slippage_bps: 2,
+      candle_limit: 180,
+      params: { lookback: 30, exit_lookback: 15 },
+      risk_limits: { ...defaultRiskLimits, max_position_pct: 45, max_order_notional: 20_000 },
+    },
+  },
+  {
+    id: 'big-short-watch',
+    name: '빅쇼트 감시자',
+    persona: '공매도를 실행하지 않고 과열, 하락 전환, 리스크 확대 신호만 감시합니다.',
+    summary: '방어형 paper 봇으로 급락 리스크를 먼저 발견하는 운영 보조 역할입니다.',
+    description: 'Short 주문 없이 paper session에서 하락 리스크와 손실 중단 기준을 감시합니다.',
+    operating_style: 'defensive_monitor',
+    execution_mode: 'paper',
+    interval_minutes: 180,
+    active: true,
+    priority: 65,
+    max_intents_per_run: 1,
+    conflict_policy: 'block_same_symbol',
+    avatar: { seed: 'big-short-watch-v1', style: 'identicon', accent_color: '#a73621' },
+    request: {
+      symbol: 'QQQ',
+      timeframe: 'day',
+      source: 'sample_us',
+      strategy: 'rsi_mean_reversion',
+      initial_cash: 100_000,
+      fee_bps: 1,
+      slippage_bps: 1,
+      candle_limit: 180,
+      params: { rsi_window: 14, buy_below: 30, sell_above: 62 },
+      risk_limits: {
+        ...defaultRiskLimits,
+        max_position_pct: 20,
+        max_order_notional: 10_000,
+        max_orders: 8,
+        max_session_loss_pct: 6,
+      },
+    },
+  },
+];
+
 const defaultAlertThresholds: PortfolioResearchAlertThresholds = {
   max_drawdown_pct: 12,
   min_total_return_pct: 0,
@@ -1406,6 +1646,40 @@ const symbolsBySource: Record<Source, string[]> = {
   sample_us: ['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA'],
   alpha_vantage: ['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA'],
 };
+
+function botProfileFromPreset(preset: BotPreset): BotProfileCreate {
+  return {
+    name: preset.name,
+    description: preset.description,
+    operating_style: preset.operating_style,
+    execution_mode: preset.execution_mode,
+    interval_minutes: preset.interval_minutes,
+    active: preset.active,
+    priority: preset.priority,
+    max_intents_per_run: preset.max_intents_per_run,
+    conflict_policy: preset.conflict_policy,
+    avatar: preset.avatar ? { ...preset.avatar } : undefined,
+    request: {
+      ...preset.request,
+      params: { ...preset.request.params },
+      risk_limits: { ...preset.request.risk_limits },
+    },
+  };
+}
+
+function backtestRequestFromBot(profile: BotProfile): BacktestRequest {
+  return {
+    symbol: profile.request.symbol,
+    timeframe: profile.request.timeframe,
+    source: profile.request.source,
+    strategy: profile.request.strategy,
+    initial_cash: profile.request.initial_cash,
+    fee_bps: profile.request.fee_bps,
+    slippage_bps: profile.request.slippage_bps,
+    candle_limit: profile.request.candle_limit,
+    params: { ...profile.request.params },
+  };
+}
 
 function App() {
   const [theme, setTheme] = React.useState<ThemeMode>(() => initialThemeMode());
@@ -1732,100 +2006,27 @@ function App() {
     }
   }, []);
 
-  const createSampleBotFleet = React.useCallback(async () => {
+  const createBotProfile = React.useCallback(async (profile: BotProfileCreate) => {
     setBotFleetLoading(true);
     setBotFleetError(null);
     setBotFleetMessage(null);
-    const profiles = [
-      {
-        name: 'Trend Scout',
-        description: 'Breakout bot for KRW crypto dry-run review.',
-        operating_style: 'breakout',
-        execution_mode: 'dry_run',
-        interval_minutes: 120,
-        active: true,
-        priority: 80,
-        max_intents_per_run: 2,
-        conflict_policy: 'allow',
-        request: {
-          symbol: 'KRW-BTC',
-          timeframe: 'day',
-          source: 'sample',
-          strategy: 'donchian_breakout',
-          initial_cash: 1_000_000,
-          fee_bps: 5,
-          slippage_bps: 2,
-          candle_limit: 180,
-          params: { lookback: 20, exit_lookback: 10 },
-          risk_limits: { ...defaultRiskLimits, max_position_pct: 50 },
-        },
-      },
-      {
-        name: 'Pullback Hunter',
-        description: 'Mean reversion bot for US ETF paper-only sessions.',
-        operating_style: 'mean_reversion',
-        execution_mode: 'paper',
-        interval_minutes: 240,
-        active: true,
-        priority: 60,
-        max_intents_per_run: 3,
-        conflict_policy: 'allow',
-        request: {
-          symbol: 'SPY',
-          timeframe: 'day',
-          source: 'sample_us',
-          strategy: 'rsi_mean_reversion',
-          initial_cash: 100_000,
-          fee_bps: 1,
-          slippage_bps: 1,
-          candle_limit: 180,
-          params: { rsi_window: 14, buy_below: 35, sell_above: 58 },
-          risk_limits: { ...defaultRiskLimits, max_position_pct: 40, max_order_notional: 25_000 },
-        },
-      },
-      {
-        name: 'Crossover Core',
-        description: 'Baseline SMA bot that keeps a conservative BTC paper sleeve.',
-        operating_style: 'trend_following',
-        execution_mode: 'paper',
-        interval_minutes: 360,
-        active: true,
-        priority: 50,
-        max_intents_per_run: 3,
-        conflict_policy: 'allow',
-        request: {
-          symbol: 'KRW-BTC',
-          timeframe: 'day',
-          source: 'sample',
-          strategy: 'sma_crossover',
-          initial_cash: 1_000_000,
-          fee_bps: 5,
-          slippage_bps: 2,
-          candle_limit: 180,
-          params: { fast_window: 10, slow_window: 30 },
-          risk_limits: defaultRiskLimits,
-        },
-      },
-    ];
     try {
-      const created = await Promise.all(
-        profiles.map(async (profile) => {
-          const response = await fetch(`${API_BASE_URL}/api/bots/profiles`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(profile),
-          });
-          if (!response.ok) {
-            const payload = await response.json().catch(() => null);
-            throw new Error(payload?.detail ?? `Bot profile create failed with ${response.status}`);
-          }
-          return (await response.json()) as BotProfile;
-        }),
-      );
-      setBotFleetMessage(`Created ${created.length} bot profiles.`);
+      const response = await fetch(`${API_BASE_URL}/api/bots/profiles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.detail ?? `Bot profile create failed with ${response.status}`);
+      }
+      const created = (await response.json()) as BotProfile;
+      setBotFleetMessage(`${created.name} 봇을 추가했습니다.`);
       await refreshBotFleet();
+      return created;
     } catch (err) {
-      setBotFleetError(err instanceof Error ? err.message : 'Could not create bot profiles');
+      setBotFleetError(err instanceof Error ? err.message : '봇을 추가하지 못했습니다.');
+      throw err;
     } finally {
       setBotFleetLoading(false);
     }
@@ -1848,10 +2049,10 @@ function App() {
         setPaperSession(latestSession);
         setLiveSession(null);
       }
-      setBotFleetMessage(`Ran ${payload.runs.length} due bot(s); ${payload.errors.length} issue(s).`);
+      setBotFleetMessage(`실행 대상 봇 ${payload.runs.length}개를 실행했습니다. 이슈 ${payload.errors.length}개.`);
       await refreshBotFleet();
     } catch (err) {
-      setBotFleetError(err instanceof Error ? err.message : 'Could not run due bot fleet');
+      setBotFleetError(err instanceof Error ? err.message : '실행 대상 봇을 실행하지 못했습니다.');
     } finally {
       setBotFleetLoading(false);
     }
@@ -1880,10 +2081,10 @@ function App() {
         setPaperSession(run.session);
         setLiveSession(null);
       }
-      setBotFleetMessage(`${run.bot_name} finished as ${run.status.replaceAll('_', ' ')}.`);
+      setBotFleetMessage(`${run.bot_name} 봇 실행이 ${botRunStatusLabel(run.status)} 상태로 끝났습니다.`);
       await refreshBotFleet();
     } catch (err) {
-      setBotFleetError(err instanceof Error ? err.message : 'Could not run bot profile');
+      setBotFleetError(err instanceof Error ? err.message : '봇을 실행하지 못했습니다.');
     } finally {
       setBotFleetRunningId(null);
     }
@@ -1900,9 +2101,10 @@ function App() {
         const payload = await response.json().catch(() => null);
         throw new Error(payload?.detail ?? `Bot pause failed with ${response.status}`);
       }
+      setBotFleetMessage('봇을 일시정지했습니다.');
       await refreshBotFleet();
     } catch (err) {
-      setBotFleetError(err instanceof Error ? err.message : 'Could not pause bot');
+      setBotFleetError(err instanceof Error ? err.message : '봇을 일시정지하지 못했습니다.');
     } finally {
       setBotFleetRunningId(null);
     }
@@ -1919,9 +2121,10 @@ function App() {
         const payload = await response.json().catch(() => null);
         throw new Error(payload?.detail ?? `Bot resume failed with ${response.status}`);
       }
+      setBotFleetMessage('봇을 재개했습니다.');
       await refreshBotFleet();
     } catch (err) {
-      setBotFleetError(err instanceof Error ? err.message : 'Could not resume bot');
+      setBotFleetError(err instanceof Error ? err.message : '봇을 재개하지 못했습니다.');
     } finally {
       setBotFleetRunningId(null);
     }
@@ -1938,9 +2141,10 @@ function App() {
         const payload = await response.json().catch(() => null);
         throw new Error(payload?.detail ?? `Bot delete failed with ${response.status}`);
       }
+      setBotFleetMessage('봇을 삭제했습니다.');
       await refreshBotFleet();
     } catch (err) {
-      setBotFleetError(err instanceof Error ? err.message : 'Could not delete bot');
+      setBotFleetError(err instanceof Error ? err.message : '봇을 삭제하지 못했습니다.');
     } finally {
       setBotFleetRunningId(null);
     }
@@ -2575,6 +2779,33 @@ function App() {
       setLoading(false);
     }
   }, [refreshBacktestRuns, refreshColumnarStatus, refreshProviderStatuses, request]);
+
+  const runBotBacktest = React.useCallback(async (profile: BotProfile) => {
+    const botRequest = backtestRequestFromBot(profile);
+    const response = await fetch(`${API_BASE_URL}/api/backtests/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(botRequest),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.detail ?? `Bot backtest failed with ${response.status}`);
+    }
+    const payload = (await response.json()) as BacktestResponse;
+    setRequest(botRequest);
+    setResult(payload);
+    if (payload.id) {
+      setComparisonDetails((current) => ({ ...current, [payload.id!]: payload }));
+      setSelectedCompareIds((current) => [
+        payload.id!,
+        ...current.filter((id) => id !== payload.id),
+      ].slice(0, 3));
+    }
+    await refreshBacktestRuns();
+    await refreshProviderStatuses();
+    await refreshColumnarStatus();
+    return payload;
+  }, [refreshBacktestRuns, refreshColumnarStatus, refreshProviderStatuses]);
 
   const runBacktestSweep = React.useCallback(async () => {
     setSweepLoading(true);
@@ -4491,513 +4722,34 @@ function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Quant Lab</p>
-          <h1>Quant trading workspace</h1>
+          <h1>퀀트 봇 운영 워크스페이스</h1>
         </div>
         <div className="topbar-actions">
           <button
             className="theme-toggle"
             onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-            title={theme === 'dark' ? 'Switch to white theme' : 'Switch to dark theme'}
+            title={theme === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'}
             type="button"
           >
             {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            {theme === 'dark' ? 'White' : 'Dark'}
+            {theme === 'dark' ? '라이트' : '다크'}
           </button>
-          <div className="status-pill" title="Live order routing is not implemented in this MVP">
+          <div className="status-pill" title="실거래 주문은 별도 승인 게이트 전까지 잠겨 있습니다.">
             <ShieldCheck size={16} />
-            {executionStatus?.adapter_ready ? 'Live trading armed' : 'Live trading locked'}
+            {executionStatus?.adapter_ready ? '실거래 준비됨' : '실거래 잠금'}
           </div>
         </div>
       </header>
 
       <section className="workspace-grid">
-        <aside className="panel controls-panel">
-          <div className="panel-title">
-            <Activity size={18} />
-            <h2>Run setup</h2>
-          </div>
-
-          <label>
-            Market
-            <select
-              value={request.symbol}
-              onChange={(event) => setRequest({ ...request, symbol: event.target.value })}
-            >
-              {currentSymbols.map((symbol) => (
-                <option value={symbol} key={symbol}>
-                  {symbol}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            Data source
-            <select
-              value={request.source}
-              onChange={(event) => changeSource(event.target.value as Source)}
-            >
-              {sourceOptions.map((option) => (
-                <option value={option.value} key={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            Strategy
-            <select
-              value={request.strategy}
-              onChange={(event) => switchStrategy(event.target.value as Strategy)}
-            >
-              <option value="sma_crossover">SMA crossover</option>
-              <option value="donchian_breakout">Donchian breakout</option>
-              <option value="rsi_mean_reversion">RSI mean reversion</option>
-            </select>
-          </label>
-
-          <div className="input-row">
-            <label>
-              Initial cash
-              <input
-                type="number"
-                min="10000"
-                step="10000"
-                value={request.initial_cash}
-                onChange={(event) =>
-                  setRequest({ ...request, initial_cash: Number(event.target.value) })
-                }
-              />
-            </label>
-            <label>
-              Candles
-              <input
-                type="number"
-                min="50"
-                max="400"
-                value={request.candle_limit}
-                onChange={(event) =>
-                  setRequest({ ...request, candle_limit: Number(event.target.value) })
-                }
-              />
-            </label>
-          </div>
-
-          <div className="input-row">
-            <label>
-              Fee bps
-              <input
-                type="number"
-                min="0"
-                value={request.fee_bps}
-                onChange={(event) =>
-                  setRequest({ ...request, fee_bps: Number(event.target.value) })
-                }
-              />
-            </label>
-            <label>
-              Slippage bps
-              <input
-                type="number"
-                min="0"
-                value={request.slippage_bps}
-                onChange={(event) =>
-                  setRequest({ ...request, slippage_bps: Number(event.target.value) })
-                }
-              />
-            </label>
-          </div>
-
-          {request.strategy === 'sma_crossover' ? (
-            <div className="input-row">
-              <label>
-                Fast SMA
-                <input
-                  type="number"
-                  min="2"
-                  value={request.params.fast_window}
-                  onChange={(event) => updateParam('fast_window', Number(event.target.value))}
-                />
-              </label>
-              <label>
-                Slow SMA
-                <input
-                  type="number"
-                  min="3"
-                  value={request.params.slow_window}
-                  onChange={(event) => updateParam('slow_window', Number(event.target.value))}
-                />
-              </label>
-            </div>
-          ) : request.strategy === 'donchian_breakout' ? (
-            <div className="input-row">
-              <label>
-                Breakout
-                <input
-                  type="number"
-                  min="3"
-                  value={request.params.lookback}
-                  onChange={(event) => updateParam('lookback', Number(event.target.value))}
-                />
-              </label>
-              <label>
-                Exit
-                <input
-                  type="number"
-                  min="3"
-                  value={request.params.exit_lookback}
-                  onChange={(event) => updateParam('exit_lookback', Number(event.target.value))}
-                />
-              </label>
-            </div>
-          ) : (
-            <>
-              <div className="input-row">
-                <label>
-                  RSI window
-                  <input
-                    type="number"
-                    min="2"
-                    value={request.params.rsi_window}
-                    onChange={(event) => updateParam('rsi_window', Number(event.target.value))}
-                  />
-                </label>
-                <label>
-                  Buy below
-                  <input
-                    type="number"
-                    min="1"
-                    max="98"
-                    value={request.params.buy_below}
-                    onChange={(event) => updateParam('buy_below', Number(event.target.value))}
-                  />
-                </label>
-              </div>
-              <div className="input-row">
-                <label>
-                  Sell above
-                  <input
-                    type="number"
-                    min="2"
-                    max="99"
-                    value={request.params.sell_above}
-                    onChange={(event) => updateParam('sell_above', Number(event.target.value))}
-                  />
-                </label>
-              </div>
-            </>
-          )}
-
-          <div className="risk-section">
-            <div className="panel-title compact-title">
-              <ShieldCheck size={16} />
-              <h2>Risk guardrails</h2>
-            </div>
-            <div className="input-row">
-              <label>
-                Max position %
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={riskLimits.max_position_pct}
-                  onChange={(event) =>
-                    updateRiskLimit('max_position_pct', Number(event.target.value))
-                  }
-                />
-              </label>
-              <label>
-                Max order
-                <input
-                  type="number"
-                  min="1000"
-                  step="10000"
-                  value={riskLimits.max_order_notional}
-                  onChange={(event) =>
-                    updateRiskLimit('max_order_notional', Number(event.target.value))
-                  }
-                />
-              </label>
-            </div>
-            <div className="input-row">
-              <label>
-                Max entries
-                <input
-                  type="number"
-                  min="0"
-                  value={riskLimits.max_orders}
-                  onChange={(event) => updateRiskLimit('max_orders', Number(event.target.value))}
-                />
-              </label>
-              <label>
-                Loss halt %
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={riskLimits.max_session_loss_pct}
-                  onChange={(event) =>
-                    updateRiskLimit('max_session_loss_pct', Number(event.target.value))
-                  }
-                />
-              </label>
-            </div>
-            <label className="toggle-row">
-              <input
-                type="checkbox"
-                checked={riskLimits.kill_switch}
-                onChange={(event) => updateRiskLimit('kill_switch', event.target.checked)}
-              />
-              Kill switch
-            </label>
-          </div>
-
-          <div className="button-row">
-            <button className="run-button" onClick={runBacktest} disabled={loading}>
-              <Play size={17} fill="currentColor" />
-              {loading ? 'Running...' : 'Run backtest'}
-            </button>
-            <button className="secondary-button" onClick={runBacktestSweep} disabled={sweepLoading}>
-              <TrendingUp size={17} />
-              {sweepLoading ? 'Sweeping...' : 'Sweep params'}
-            </button>
-            <button
-              className="secondary-button"
-              onClick={validateBacktestSplit}
-              disabled={validationLoading}
-            >
-              <ShieldCheck size={17} />
-              {validationLoading ? 'Validating...' : 'Validate split'}
-            </button>
-            <button
-              className="secondary-button"
-              onClick={runWalkForwardValidation}
-              disabled={walkForwardLoading}
-            >
-              <History size={17} />
-              {walkForwardLoading ? 'Walking...' : 'Walk-forward'}
-            </button>
-            <button
-              className="secondary-button"
-              onClick={runPaperSession}
-              disabled={paperLoading}
-            >
-              <Radio size={17} />
-              {paperLoading ? 'Starting...' : 'Paper session'}
-            </button>
-            <button className="secondary-button" onClick={startLiveReplay} disabled={liveLoading}>
-              <Radio size={17} />
-              {liveLoading ? 'Starting...' : 'Start replay'}
-            </button>
-            <button className="secondary-button" onClick={startTickerPaper} disabled={liveLoading}>
-              <Activity size={17} />
-              {liveLoading ? 'Starting...' : 'Start ticker'}
-            </button>
-            <button
-              className="tertiary-button"
-              onClick={() => advanceLiveReplay()}
-              disabled={
-                advanceLoading ||
-                !liveSession ||
-                liveSession.summary.status !== 'running' ||
-                liveSession.mode === 'ticker'
-              }
-            >
-              <Play size={17} fill="currentColor" />
-              {advanceLoading ? 'Advancing...' : 'Advance 5'}
-            </button>
-            <button
-              className="tertiary-button"
-              onClick={advanceTickerPaper}
-              disabled={
-                tickLoading ||
-                !liveSession ||
-                liveSession.summary.status !== 'running' ||
-                liveSession.mode !== 'ticker'
-              }
-            >
-              <Activity size={17} />
-              {tickLoading ? 'Ticking...' : 'Tick now'}
-            </button>
-          </div>
-
-          <div className="replay-controls">
-            <button
-              className={autoReplay ? 'stop-button' : 'tertiary-button'}
-              onClick={() => setAutoReplay((current) => !current)}
-              disabled={
-                !liveSession ||
-                liveSession.summary.status !== 'running' ||
-                liveSession.mode === 'ticker'
-              }
-            >
-              {autoReplay ? <Pause size={17} /> : <Radio size={17} />}
-              {autoReplay ? 'Stop auto' : 'Auto replay'}
-            </button>
-            <button
-              className={autoTick ? 'stop-button' : 'tertiary-button'}
-              onClick={() => setAutoTick((current) => !current)}
-              disabled={
-                !liveSession ||
-                liveSession.summary.status !== 'running' ||
-                liveSession.mode !== 'ticker'
-              }
-            >
-              {autoTick ? <Pause size={17} /> : <Activity size={17} />}
-              {autoTick ? 'Stop tick' : 'Auto tick'}
-            </button>
-            <label>
-              Tick ms
-              <input
-                type="number"
-                min="300"
-                max="5000"
-                step="100"
-                value={autoReplayMs}
-                onChange={(event) =>
-                  setAutoReplayMs(clamp(Number(event.target.value), 300, 5000))
-                }
-              />
-            </label>
-          </div>
-
-          {sweepResult ? (
-            <div className="sweep-card">
-              <div className="sweep-card-title">
-                <strong>Parameter sweep</strong>
-                <span>{shortDateTime(sweepResult.generated_at)}</span>
-              </div>
-              {sweepResult.best ? (
-                <div className="sweep-best">
-                  <span>Best</span>
-                  <strong>{sweepCandidateLabel(sweepResult.best.params)}</strong>
-                  <em>{percent(sweepResult.best.metrics.total_return_pct)} return</em>
-                </div>
-              ) : null}
-              <div className="sweep-list">
-                {sweepResult.candidates.slice(0, 4).map((candidate) => (
-                  <div className="sweep-row" key={`${candidate.rank}-${sweepCandidateLabel(candidate.params)}`}>
-                    <span>#{candidate.rank}</span>
-                    <strong>{sweepCandidateLabel(candidate.params)}</strong>
-                    <em>{percent(candidate.metrics.strategy_edge_pct)} edge</em>
-                    <em>{percent(candidate.metrics.max_drawdown_pct)} MDD</em>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {validationResult ? (
-            <div className="validation-card">
-              <div className="sweep-card-title">
-                <strong>Train/test validation</strong>
-                <span>{shortDateTime(validationResult.generated_at)}</span>
-              </div>
-              <div className={`validation-verdict validation-${validationResult.verdict}`}>
-                <span>{validationResult.verdict}</span>
-                <strong>{validationResult.reason}</strong>
-              </div>
-              <div className="validation-grid">
-                <div>
-                  <span>Train</span>
-                  <strong>{percent(validationResult.train.metrics.total_return_pct)}</strong>
-                  <em>{validationResult.train.candle_count} candles</em>
-                </div>
-                <div>
-                  <span>Test</span>
-                  <strong>{percent(validationResult.test.metrics.total_return_pct)}</strong>
-                  <em>{validationResult.test.candle_count} candles</em>
-                </div>
-                <div>
-                  <span>Edge gap</span>
-                  <strong>{percent(validationResult.edge_gap_pct)}</strong>
-                  <em>score {number(validationResult.robustness_score)}</em>
-                </div>
-              </div>
-            </div>
-          ) : null}
-          {walkForwardResult ? (
-            <div className="walk-forward-card">
-              <div className="sweep-card-title">
-                <strong>Walk-forward validation</strong>
-                <span>{shortDateTime(walkForwardResult.generated_at)}</span>
-              </div>
-              <div className={`validation-verdict validation-${walkForwardResult.verdict}`}>
-                <span>{walkForwardResult.verdict}</span>
-                <strong>{walkForwardResult.reason}</strong>
-              </div>
-              <div className="walk-forward-summary">
-                <div>
-                  <span>Folds</span>
-                  <strong>{walkForwardResult.folds.length}</strong>
-                  <em>{walkForwardResult.pass_count} pass · {walkForwardResult.watch_count} watch · {walkForwardResult.fail_count} fail</em>
-                </div>
-                <div>
-                  <span>Avg test return</span>
-                  <strong>{percent(walkForwardResult.average_test_return_pct)}</strong>
-                  <em>{percent(walkForwardResult.average_test_edge_pct)} edge</em>
-                </div>
-                <div>
-                  <span>Avg score</span>
-                  <strong>{number(walkForwardResult.average_robustness_score)}</strong>
-                  <em>{walkForwardResult.request.train_window}/{walkForwardResult.request.test_window} bars</em>
-                </div>
-              </div>
-              <div className="walk-forward-fold-list">
-                {walkForwardResult.folds.slice(0, 4).map((fold) => (
-                  <div className="walk-forward-fold" key={fold.index}>
-                    <span>#{fold.index}</span>
-                    <strong>{fold.verdict}</strong>
-                    <em>{percent(fold.test.metrics.total_return_pct)} test</em>
-                    <em>{percent(fold.edge_gap_pct)} gap</em>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {error ? <p className="error-message">{error}</p> : null}
-          {sweepError ? <p className="error-message">{sweepError}</p> : null}
-          {validationError ? <p className="error-message">{validationError}</p> : null}
-          {walkForwardError ? <p className="error-message">{walkForwardError}</p> : null}
-          {executionError ? <p className="error-message">{executionError}</p> : null}
-          {historyError ? <p className="error-message">{historyError}</p> : null}
-          {paperError ? <p className="error-message">{paperError}</p> : null}
-          {portfolioError ? <p className="error-message">{portfolioError}</p> : null}
-          {liveError ? <p className="error-message">{liveError}</p> : null}
-          {result?.warnings.map((warning, index) => (
-            <p className="warning-message" key={`backtest-${warning}-${index}`}>
-              {warning}
-            </p>
-          ))}
-          {paperSession?.warnings.map((warning, index) => (
-            <p className="warning-message" key={`paper-${warning}-${index}`}>
-              {warning}
-            </p>
-          ))}
-          {liveSession?.warnings.map((warning, index) => (
-            <p className="warning-message" key={`live-${warning}-${index}`}>
-              {warning}
-            </p>
-          ))}
-          {sweepResult?.warnings.map((warning, index) => (
-            <p className="warning-message" key={`sweep-${warning}-${index}`}>
-              {warning}
-            </p>
-          ))}
-          {validationResult?.warnings.map((warning, index) => (
-            <p className="warning-message" key={`validation-${warning}-${index}`}>
-              {warning}
-            </p>
-          ))}
-          {walkForwardResult?.warnings.map((warning, index) => (
-            <p className="warning-message" key={`walk-forward-${warning}-${index}`}>
-              {warning}
-            </p>
-          ))}
-        </aside>
-
         <section className="results-stack">
-          <MarketTickerPanel ticker={marketTicker} error={tickerError} />
+          <MarketTickerPanel
+            ticker={marketTicker}
+            error={tickerError}
+            providers={providerStatuses}
+            columnarStatus={columnarStatus}
+            onRefresh={refreshTicker}
+          />
           <BotFleetPanel
             fleet={botFleet}
             lastRun={botFleetLastRun}
@@ -5005,13 +4757,15 @@ function App() {
             runningId={botFleetRunningId}
             message={botFleetMessage}
             error={botFleetError}
+            backtestRuns={backtestRuns}
             onRefresh={refreshBotFleet}
-            onCreateSampleFleet={createSampleBotFleet}
+            onCreateBot={createBotProfile}
             onRunDue={runDueBotFleet}
             onRunBot={runBotProfile}
             onPauseBot={pauseBotProfile}
             onResumeBot={resumeBotProfile}
             onDeleteBot={deleteBotProfile}
+            onRunBacktest={runBotBacktest}
           />
           <DataProvidersPanel
             providers={providerStatuses}
@@ -5305,40 +5059,130 @@ function App() {
 function MarketTickerPanel({
   ticker,
   error,
+  providers,
+  columnarStatus,
+  onRefresh,
 }: {
   ticker: MarketTicker | null;
   error: string | null;
+  providers: MarketDataProviderStatus[];
+  columnarStatus: MarketDataColumnarStatus | null;
+  onRefresh: () => void;
 }) {
   const changeClass = ticker && ticker.change_pct < 0 ? 'ticker-negative' : 'ticker-positive';
+  const provider = ticker ? providers.find((item) => item.source === ticker.source) : null;
+  const providerState = provider?.available ? 'ready' : provider?.configured ? 'blocked' : 'missing';
+  const providerLabel = provider
+    ? provider.available
+      ? '데이터 정상'
+      : provider.configured
+        ? '확인 필요'
+        : '설정 필요'
+    : '대기 중';
+  const marketSourceLabel = ticker ? sourceLabelKo(ticker.source) : '소스 대기';
+  const volumeLabel = ticker?.quote_volume_24h ? '거래대금' : '거래량';
+  const volumeDisplay = tickerVolumeDisplay(ticker);
 
   return (
     <section className="panel ticker-panel">
       <div className="panel-title">
         <Activity size={18} />
-        <h2>Market ticker</h2>
-        <span className="ticker-source">{ticker?.source ?? 'idle'}</span>
+        <h2>마켓 데이터</h2>
+        <button className="icon-button" onClick={onRefresh} title="마켓 데이터 새로고침" type="button">
+          <RefreshCcw size={15} />
+        </button>
+      </div>
+      <div className="ticker-status-row">
+        <span className="ticker-source">{marketSourceLabel}</span>
+        <span className={`market-data-state market-data-${providerState}`}>{providerLabel}</span>
+        <span className={`market-data-state market-data-${columnarStatus?.enabled ? 'ready' : 'missing'}`}>
+          캐시 {columnarStatus?.enabled ? `${columnarStatus.rows.toLocaleString()}행` : '꺼짐'}
+        </span>
       </div>
       <div className="ticker-grid">
         <div>
-          <span>Symbol</span>
+          <span>종목</span>
           <strong>{ticker?.symbol ?? '-'}</strong>
         </div>
         <div>
-          <span>Last price</span>
+          <span>현재가</span>
           <strong>{money(ticker?.price, currencyForSource(ticker?.source ?? 'sample'))}</strong>
         </div>
         <div>
-          <span>24h change</span>
+          <span>24H 변동</span>
           <strong className={changeClass}>{percent(ticker?.change_pct)}</strong>
         </div>
         <div>
-          <span>Updated</span>
+          <span>갱신 시각</span>
           <strong>{ticker ? shortDateTime(ticker.timestamp) : '-'}</strong>
+        </div>
+        <div>
+          <span>{volumeLabel}</span>
+          <strong>{volumeDisplay}</strong>
+        </div>
+        <div>
+          <span>최근 수집</span>
+          <strong>{provider?.last_success_at ? shortDateTime(provider.last_success_at) : '-'}</strong>
         </div>
       </div>
       {error ? <p className="error-message">{error}</p> : null}
     </section>
   );
+}
+
+type DiceBearStyle = Parameters<typeof createAvatar>[0];
+
+const BOT_AVATAR_COLLECTION: Record<BotAvatarStyle, DiceBearStyle> = {
+  pixel_art: pixelArt as DiceBearStyle,
+  pixel_art_neutral: pixelArtNeutral as DiceBearStyle,
+  bottts: bottts as DiceBearStyle,
+  identicon: identicon as DiceBearStyle,
+};
+
+const BOT_AVATAR_FALLBACK: Record<BotOperatingStyle, BotAvatar> = {
+  trend_following: { seed: 'trend-following', style: 'pixel_art', accent_color: '#2f9b73' },
+  mean_reversion: { seed: 'mean-reversion', style: 'pixel_art_neutral', accent_color: '#5d84be' },
+  breakout: { seed: 'breakout', style: 'bottts', accent_color: '#d59a25' },
+  portfolio_rotation: { seed: 'portfolio-rotation', style: 'identicon', accent_color: '#6d76d9' },
+  defensive_monitor: { seed: 'defensive-monitor', style: 'identicon', accent_color: '#64748b' },
+  custom: { seed: 'custom-bot', style: 'pixel_art', accent_color: '#8b5cf6' },
+};
+
+function BotProfileAvatar({ profile, status }: { profile: BotProfile; status: BotVisualStatus }) {
+  const accentColor = normalizeBotAvatarColor(
+    profile.avatar?.accent_color ?? BOT_AVATAR_FALLBACK[profile.operating_style].accent_color,
+  );
+  const imageUri = React.useMemo(() => botAvatarDataUri(profile), [profile]);
+
+  return (
+    <div
+      className={`bot-avatar-frame ${botAvatarStatusClass(status)}`}
+      style={{ '--bot-avatar-accent': accentColor } as React.CSSProperties}
+      title={`${profile.name} avatar`}
+    >
+      <img className="bot-avatar-image" src={imageUri} alt={`${profile.name} avatar`} />
+    </div>
+  );
+}
+
+function botAvatarDataUri(profile: BotProfile) {
+  const fallback = BOT_AVATAR_FALLBACK[profile.operating_style];
+  const avatar = profile.avatar ?? fallback;
+  const style = BOT_AVATAR_COLLECTION[avatar.style] ? avatar.style : fallback.style;
+  const seed = avatar.seed?.trim() || `${profile.operating_style}:${profile.name}:${profile.id}`;
+  const accent = normalizeBotAvatarColor(avatar.accent_color || fallback.accent_color).replace('#', '');
+
+  return createAvatar(BOT_AVATAR_COLLECTION[style], {
+    seed,
+    backgroundColor: [accent],
+    backgroundType: ['solid'],
+    radius: 8,
+    size: 64,
+  }).toDataUri();
+}
+
+function normalizeBotAvatarColor(color: string) {
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#2f9b73';
 }
 
 function BotFleetPanel({
@@ -5348,13 +5192,15 @@ function BotFleetPanel({
   runningId,
   message,
   error,
+  backtestRuns,
   onRefresh,
-  onCreateSampleFleet,
+  onCreateBot,
   onRunDue,
   onRunBot,
   onPauseBot,
   onResumeBot,
   onDeleteBot,
+  onRunBacktest,
 }: {
   fleet: BotFleetStatus | null;
   lastRun: BotFleetRun | null;
@@ -5362,89 +5208,308 @@ function BotFleetPanel({
   runningId: string | null;
   message: string | null;
   error: string | null;
+  backtestRuns: BacktestRunSummary[];
   onRefresh: () => void;
-  onCreateSampleFleet: () => void;
+  onCreateBot: (profile: BotProfileCreate) => Promise<BotProfile>;
   onRunDue: () => void;
-  onRunBot: (botId: string) => void;
+  onRunBot: (botId: string) => void | Promise<void>;
   onPauseBot: (botId: string) => void;
   onResumeBot: (botId: string) => void;
   onDeleteBot: (botId: string) => void;
+  onRunBacktest: (profile: BotProfile) => Promise<BacktestResponse>;
 }) {
   const profiles = fleet?.profiles ?? [];
   const summary = fleet?.summary;
   const latestRunByBot = new Map((fleet?.recent_runs ?? []).map((run) => [run.bot_id, run]));
+  const [setupOpen, setSetupOpen] = React.useState(false);
+  const [selectedPresetId, setSelectedPresetId] = React.useState(botPresets[0].id);
+  const [draft, setDraft] = React.useState<BotProfileCreate>(() => botProfileFromPreset(botPresets[0]));
+  const [saving, setSaving] = React.useState(false);
+  const [deleteTarget, setDeleteTarget] = React.useState<BotProfile | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = React.useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = React.useState(false);
+  const [detailTab, setDetailTab] = React.useState<BotDetailTab>('overview');
+  const [statusFilter, setStatusFilter] = React.useState<BotFleetStatusFilter>('all');
+  const [sortKey, setSortKey] = React.useState<BotFleetSortKey>('priority');
+  const [backtestResultsByBot, setBacktestResultsByBot] = React.useState<Record<string, BacktestResponse>>({});
+  const [backtestLoadingId, setBacktestLoadingId] = React.useState<string | null>(null);
+  const [backtestError, setBacktestError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (selectedProfileId && !profiles.some((profile) => profile.id === selectedProfileId)) {
+      setSelectedProfileId(null);
+      setDetailOpen(false);
+    }
+  }, [profiles, selectedProfileId]);
+
+  const openDetail = React.useCallback((profile: BotProfile, nextTab: BotDetailTab = 'overview') => {
+    setSelectedProfileId(profile.id);
+    setDetailTab(nextTab);
+    setBacktestError(null);
+    setDetailOpen(true);
+  }, []);
+
+  const applyPreset = React.useCallback((preset: BotPreset) => {
+    setSelectedPresetId(preset.id);
+    setDraft(botProfileFromPreset(preset));
+  }, []);
+
+  const openSetup = React.useCallback(() => {
+    applyPreset(botPresets[0]);
+    setSetupOpen(true);
+  }, [applyPreset]);
+
+  const updateDraftRequest = React.useCallback((updates: Partial<BacktestRequest & { risk_limits: RiskLimits }>) => {
+    setDraft((current) => ({
+      ...current,
+      request: {
+        ...current.request,
+        ...updates,
+      },
+    }));
+  }, []);
+
+  const changeDraftSource = React.useCallback((source: Source) => {
+    const usdSource = isUsdSource(source);
+    updateDraftRequest({
+      source,
+      symbol: defaultSymbolForSource(source),
+      initial_cash: usdSource ? 100_000 : 1_000_000,
+      fee_bps: usdSource ? 1 : 5,
+      slippage_bps: usdSource ? 1 : 2,
+      risk_limits: {
+        ...draft.request.risk_limits,
+        max_order_notional: usdSource ? 25_000 : 500_000,
+      },
+    });
+  }, [draft.request.risk_limits, updateDraftRequest]);
+
+  const switchDraftStrategy = React.useCallback((strategy: Strategy) => {
+    updateDraftRequest({
+      strategy,
+      params: defaultParamsForStrategy(strategy),
+    });
+  }, [updateDraftRequest]);
+
+  const updateDraftParam = React.useCallback((key: string, value: number) => {
+    updateDraftRequest({
+      params: {
+        ...draft.request.params,
+        [key]: value,
+      },
+    });
+  }, [draft.request.params, updateDraftRequest]);
+
+  const updateDraftRisk = React.useCallback((key: keyof RiskLimits, value: number | boolean) => {
+    updateDraftRequest({
+      risk_limits: {
+        ...draft.request.risk_limits,
+        [key]: value,
+      },
+    });
+  }, [draft.request.risk_limits, updateDraftRequest]);
+
+  const submitDraft = React.useCallback(async (runAfterSave: boolean) => {
+    setSaving(true);
+    try {
+      const created = await onCreateBot(draft);
+      setSelectedProfileId(created.id);
+      setDetailTab('overview');
+      setSetupOpen(false);
+      if (runAfterSave) {
+        await onRunBot(created.id);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, onCreateBot, onRunBot]);
+
+  const deleteTargetRun = deleteTarget ? latestRunByBot.get(deleteTarget.id) : undefined;
+  const deleteTargetHasPosition = (deleteTargetRun?.session?.summary.open_position_pct ?? 0) > 0;
+  const selectedProfile = selectedProfileId
+    ? profiles.find((profile) => profile.id === selectedProfileId) ?? null
+    : null;
+  const selectedLatestRun = selectedProfile ? latestRunByBot.get(selectedProfile.id) : undefined;
+  const selectedBacktestResult = selectedProfile ? backtestResultsByBot[selectedProfile.id] : undefined;
+
+  const runSelectedBacktest = React.useCallback(async () => {
+    if (!selectedProfile) return;
+    setBacktestLoadingId(selectedProfile.id);
+    setBacktestError(null);
+    try {
+      const payload = await onRunBacktest(selectedProfile);
+      setBacktestResultsByBot((current) => ({ ...current, [selectedProfile.id]: payload }));
+      setDetailTab('backtest');
+    } catch (err) {
+      setBacktestError(err instanceof Error ? err.message : '봇 백테스트를 실행하지 못했습니다.');
+    } finally {
+      setBacktestLoadingId(null);
+    }
+  }, [onRunBacktest, selectedProfile]);
+
+  const botRows = profiles.map((profile) => {
+    const latest = latestRunByBot.get(profile.id);
+    const status = latest?.status ?? profile.last_status ?? 'idle';
+    const visualStatus: BotVisualStatus = runningId === profile.id ? 'running' : profile.active ? status : 'paused';
+    const currency = currencyForSource(profile.request.source);
+    const capital = latest?.session?.summary.final_equity ?? profile.request.initial_cash;
+    const returnPct = latest?.session?.summary.total_return_pct;
+    return {
+      profile,
+      latest,
+      visualStatus,
+      currency,
+      capital,
+      returnPct,
+    };
+  });
+  const visibleBotRows = botRows
+    .filter(({ profile, visualStatus }) => {
+      if (statusFilter === 'all') return true;
+      if (statusFilter === 'active') return profile.active;
+      if (statusFilter === 'paused') return !profile.active;
+      if (statusFilter === 'running') return visualStatus === 'running';
+      if (statusFilter === 'completed') return visualStatus === 'completed';
+      return profile.last_error || ['halted', 'blocked', 'error'].includes(visualStatus);
+    })
+    .sort((left, right) => {
+      if (sortKey === 'return') {
+        return (right.returnPct ?? Number.NEGATIVE_INFINITY) - (left.returnPct ?? Number.NEGATIVE_INFINITY);
+      }
+      if (sortKey === 'capital') {
+        return right.capital - left.capital;
+      }
+      if (sortKey === 'schedule') {
+        return new Date(left.profile.next_run_at).getTime() - new Date(right.profile.next_run_at).getTime();
+      }
+      if (sortKey === 'name') {
+        return left.profile.name.localeCompare(right.profile.name);
+      }
+      return right.profile.priority - left.profile.priority || left.profile.name.localeCompare(right.profile.name);
+    });
+  const activeFilterLabel = botFleetStatusFilterLabel(statusFilter);
 
   return (
     <section className="panel bot-fleet-panel">
       <div className="panel-title">
         <Radio size={18} />
-        <h2>Bot fleet</h2>
-        <button className="icon-button" onClick={onRefresh} title="Refresh bot fleet">
+        <h2>봇 운영</h2>
+        <button className="icon-button" onClick={onRefresh} title="봇 목록 새로고침">
           <RefreshCcw size={15} />
         </button>
       </div>
 
       <div className="bot-fleet-summary">
         <div>
-          <span>Active bots</span>
+          <span>활성 봇</span>
           <strong>{summary?.active_bots ?? 0}/{summary?.total_bots ?? 0}</strong>
         </div>
         <div>
-          <span>Due now</span>
+          <span>실행 대기</span>
           <strong>{summary?.due_bots ?? 0}</strong>
         </div>
         <div>
-          <span>Open sleeves</span>
+          <span>열린 포지션</span>
           <strong>{summary?.open_position_bots ?? 0}</strong>
         </div>
         <div>
-          <span>Dry-run intents</span>
+          <span>드라이런 주문</span>
           <strong>{summary?.recent_dry_run_intents ?? 0}</strong>
         </div>
       </div>
 
       <div className="bot-fleet-actions">
-        <button className="secondary-button compact-action" onClick={onCreateSampleFleet} disabled={loading}>
-          <Save size={15} />
-          Seed fleet
+        <button className="secondary-button compact-action" onClick={openSetup} disabled={loading || saving}>
+          <Plus size={15} />
+          봇 추가
         </button>
         <button className="run-button compact-action" onClick={onRunDue} disabled={loading || profiles.length === 0}>
           <Play size={15} />
-          Run due
+          실행 대상 실행
         </button>
+      </div>
+
+      <div className="bot-fleet-toolbar">
+        <div className="segmented-filter" role="tablist" aria-label="봇 상태 필터">
+          {(['all', 'active', 'running', 'paused', 'completed', 'attention'] as BotFleetStatusFilter[]).map((filter) => (
+            <button
+              className={statusFilter === filter ? 'active' : ''}
+              key={filter}
+              onClick={() => setStatusFilter(filter)}
+              role="tab"
+              aria-selected={statusFilter === filter}
+              type="button"
+            >
+              {botFleetStatusFilterLabel(filter)}
+            </button>
+          ))}
+          <label className="compact-select">
+            <span>정렬</span>
+            <select value={sortKey} onChange={(event) => setSortKey(event.target.value as BotFleetSortKey)}>
+              <option value="priority">우선순위</option>
+              <option value="return">수익률</option>
+              <option value="capital">운용자본</option>
+              <option value="schedule">다음 실행</option>
+              <option value="name">이름</option>
+            </select>
+          </label>
+        </div>
+        <span className="bot-fleet-count">{visibleBotRows.length}/{profiles.length}개</span>
       </div>
 
       <div className="bot-fleet-grid">
         {profiles.length > 0 ? (
-          profiles.map((profile) => {
-            const latest = latestRunByBot.get(profile.id);
-            const status = latest?.status ?? profile.last_status ?? 'idle';
-            const currency = currencyForSource(profile.request.source);
+          <div className="bot-fleet-header">
+            <span>봇 정보</span>
+            <span>전략</span>
+            <span>모드</span>
+            <span>운용자본</span>
+            <span>수익률</span>
+            <span>스케줄</span>
+            <span>상태</span>
+          </div>
+        ) : null}
+        {visibleBotRows.length > 0 ? (
+          visibleBotRows.map(({ profile, visualStatus, currency, capital, returnPct }) => {
             return (
-              <div className="bot-fleet-row" key={profile.id}>
-                <div className="bot-fleet-main">
-                  <div>
-                    <strong>{profile.name}</strong>
-                    <span>{botStyleLabel(profile.operating_style)} · {profile.request.symbol}</span>
+              <div
+                className={`bot-fleet-row${detailOpen && selectedProfileId === profile.id ? ' bot-fleet-row-selected' : ''}`}
+                key={profile.id}
+              >
+                <div className="bot-fleet-row-grid">
+                  <div className="bot-fleet-main">
+                    <BotProfileAvatar profile={profile} status={visualStatus} />
+                    <div className="bot-fleet-title">
+                      <strong>{profile.name}</strong>
+                      <span>{botStyleLabel(profile.operating_style)} · {profile.request.symbol}</span>
+                    </div>
                   </div>
-                  <span className={botStatusClass(status)}>{status.replaceAll('_', ' ')}</span>
-                </div>
-                <div className="bot-fleet-meta">
-                  <span>{profile.request.strategy.replaceAll('_', ' ')}</span>
-                  <span>{profile.execution_mode.replaceAll('_', ' ')}</span>
-                  <span>{money(latest?.session?.summary.final_equity, currency)}</span>
-                  <span>{percent(latest?.session?.summary.total_return_pct)}</span>
-                  <span>{profile.active ? `next ${shortDateTime(profile.next_run_at)}` : 'paused'}</span>
+                  <span>{strategyLabelKo(profile.request.strategy)}</span>
+                  <span className="value-exposure">{botExecutionLabel(profile.execution_mode)}</span>
+                  <span className="value-capital">{money(capital, currency)}</span>
+                  <span className={valueToneClass(returnPct)}>{percent(returnPct)}</span>
+                  <span className={profile.active ? 'value-neutral' : 'value-paused'}>
+                    {profile.active ? `다음 ${shortDateTime(profile.next_run_at)}` : '일시정지'}
+                  </span>
+                  <span className={botStatusClass(visualStatus)}>{botVisualStatusLabel(visualStatus)}</span>
                 </div>
                 {profile.last_error ? <p className="warning-message">{profile.last_error}</p> : null}
                 <div className="bot-fleet-row-actions">
+                  <button
+                    className="secondary-button compact-action"
+                    onClick={() => openDetail(profile)}
+                    disabled={runningId === profile.id}
+                  >
+                    <FileText size={14} />
+                    상세
+                  </button>
                   <button
                     className="secondary-button compact-action"
                     onClick={() => onRunBot(profile.id)}
                     disabled={runningId === profile.id}
                   >
                     <Play size={14} />
-                    Run
+                    실행
                   </button>
                   {profile.active ? (
                     <button
@@ -5453,7 +5518,7 @@ function BotFleetPanel({
                       disabled={runningId === profile.id}
                     >
                       <Pause size={14} />
-                      Pause
+                      일시정지
                     </button>
                   ) : (
                     <button
@@ -5462,14 +5527,14 @@ function BotFleetPanel({
                       disabled={runningId === profile.id}
                     >
                       <Play size={14} />
-                      Resume
+                      재개
                     </button>
                   )}
                   <button
                     className="icon-button danger-icon"
-                    onClick={() => onDeleteBot(profile.id)}
+                    onClick={() => setDeleteTarget(profile)}
                     disabled={runningId === profile.id}
-                    title={`Delete ${profile.name}`}
+                    title={`${profile.name} 삭제`}
                   >
                     <Trash2 size={14} />
                   </button>
@@ -5477,32 +5542,701 @@ function BotFleetPanel({
               </div>
             );
           })
+        ) : profiles.length > 0 ? (
+          <div className="readiness-empty">{activeFilterLabel} 조건에 맞는 봇이 없습니다.</div>
         ) : (
-          <div className="readiness-empty">No bot profiles are configured.</div>
+          <div className="readiness-empty">아직 봇이 없습니다. 봇 추가로 전략 프리셋을 선택하세요.</div>
         )}
       </div>
 
       {lastRun ? (
         <div className="bot-run-strip">
-          <span>Last fleet run</span>
-          <strong>{lastRun.runs.length} bot(s)</strong>
+          <span>마지막 실행</span>
+          <strong>{lastRun.runs.length}개 봇</strong>
           <span>{shortDateTime(lastRun.checked_at)}</span>
         </div>
       ) : null}
       {message ? <p className="success-message">{message}</p> : null}
       {error ? <p className="error-message">{error}</p> : null}
+
+      {detailOpen && selectedProfile ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="bot-detail-modal" role="dialog" aria-modal="true" aria-labelledby="bot-detail-title">
+            <div className="modal-title">
+              <div>
+                <span>봇 상세</span>
+                <h3 id="bot-detail-title">{selectedProfile.name}</h3>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setDetailOpen(false)}
+                title="닫기"
+                type="button"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <BotFleetDetailPanel
+              profile={selectedProfile}
+              latestRun={selectedLatestRun}
+              tab={detailTab}
+              backtestRuns={backtestRuns}
+              backtestResult={selectedBacktestResult}
+              backtestLoading={backtestLoadingId === selectedProfile.id}
+              backtestError={backtestError}
+              onTabChange={setDetailTab}
+              onRunBacktest={() => void runSelectedBacktest()}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {setupOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="setup-modal" role="dialog" aria-modal="true" aria-labelledby="bot-setup-title">
+            <div className="modal-title">
+              <div>
+                <span>봇 설정</span>
+                <h3 id="bot-setup-title">봇 실행 설정</h3>
+              </div>
+              <button className="icon-button" onClick={() => setSetupOpen(false)} title="닫기">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="preset-grid">
+              {botPresets.map((preset) => (
+                <button
+                  className={`preset-card ${selectedPresetId === preset.id ? 'preset-card-active' : ''}`}
+                  key={preset.id}
+                  onClick={() => applyPreset(preset)}
+                  type="button"
+                >
+                  <strong>{preset.name}</strong>
+                  <span>{preset.persona}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="setup-form-grid">
+              <label>
+                봇 이름
+                <input
+                  value={draft.name}
+                  onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                />
+              </label>
+              <label>
+                운영 성격
+                <select
+                  value={draft.operating_style}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, operating_style: event.target.value as BotOperatingStyle }))
+                  }
+                >
+                  {(['trend_following', 'mean_reversion', 'breakout', 'portfolio_rotation', 'defensive_monitor', 'custom'] as BotOperatingStyle[]).map((style) => (
+                    <option value={style} key={style}>{botStyleLabel(style)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="setup-form-wide">
+                봇 설명
+                <textarea
+                  value={draft.description}
+                  onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
+                />
+              </label>
+            </div>
+
+            <div className="setup-form-grid">
+              <label>
+                데이터 소스
+                <select
+                  value={draft.request.source}
+                  onChange={(event) => changeDraftSource(event.target.value as Source)}
+                >
+                  {sourceOptions.map((option) => (
+                    <option value={option.value} key={option.value}>{sourceLabelKo(option.value)}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                종목
+                <select
+                  value={draft.request.symbol}
+                  onChange={(event) => updateDraftRequest({ symbol: event.target.value })}
+                >
+                  {symbolsBySource[draft.request.source].map((symbol) => (
+                    <option value={symbol} key={symbol}>{symbol}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                전략
+                <select
+                  value={draft.request.strategy}
+                  onChange={(event) => switchDraftStrategy(event.target.value as Strategy)}
+                >
+                  <option value="sma_crossover">{strategyLabelKo('sma_crossover')}</option>
+                  <option value="donchian_breakout">{strategyLabelKo('donchian_breakout')}</option>
+                  <option value="rsi_mean_reversion">{strategyLabelKo('rsi_mean_reversion')}</option>
+                </select>
+              </label>
+              <label>
+                실행 모드
+                <select
+                  value={draft.execution_mode}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, execution_mode: event.target.value as BotExecutionMode }))
+                  }
+                >
+                  <option value="paper">{botExecutionLabel('paper')}</option>
+                  <option value="dry_run">{botExecutionLabel('dry_run')}</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="setup-form-grid">
+              <label>
+                초기 자본
+                <input
+                  type="number"
+                  min="10000"
+                  step="10000"
+                  value={draft.request.initial_cash}
+                  onChange={(event) => updateDraftRequest({ initial_cash: Number(event.target.value) })}
+                />
+              </label>
+              <label>
+                실행 주기(분)
+                <input
+                  type="number"
+                  min="1"
+                  max="1440"
+                  value={draft.interval_minutes}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, interval_minutes: Number(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                캔들 수
+                <input
+                  type="number"
+                  min="50"
+                  max="400"
+                  value={draft.request.candle_limit}
+                  onChange={(event) => updateDraftRequest({ candle_limit: Number(event.target.value) })}
+                />
+              </label>
+              <label>
+                우선순위
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={draft.priority}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, priority: Number(event.target.value) }))
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="setup-form-grid">
+              {draft.request.strategy === 'sma_crossover' ? (
+                <>
+                  <label>
+                    빠른 SMA
+                    <input
+                      type="number"
+                      min="2"
+                      value={draft.request.params.fast_window}
+                      onChange={(event) => updateDraftParam('fast_window', Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    느린 SMA
+                    <input
+                      type="number"
+                      min="3"
+                      value={draft.request.params.slow_window}
+                      onChange={(event) => updateDraftParam('slow_window', Number(event.target.value))}
+                    />
+                  </label>
+                </>
+              ) : draft.request.strategy === 'donchian_breakout' ? (
+                <>
+                  <label>
+                    돌파 기준
+                    <input
+                      type="number"
+                      min="3"
+                      value={draft.request.params.lookback}
+                      onChange={(event) => updateDraftParam('lookback', Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    청산 기준
+                    <input
+                      type="number"
+                      min="3"
+                      value={draft.request.params.exit_lookback}
+                      onChange={(event) => updateDraftParam('exit_lookback', Number(event.target.value))}
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <label>
+                    RSI 기간
+                    <input
+                      type="number"
+                      min="2"
+                      value={draft.request.params.rsi_window}
+                      onChange={(event) => updateDraftParam('rsi_window', Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    매수 기준
+                    <input
+                      type="number"
+                      min="1"
+                      max="98"
+                      value={draft.request.params.buy_below}
+                      onChange={(event) => updateDraftParam('buy_below', Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    매도 기준
+                    <input
+                      type="number"
+                      min="2"
+                      max="99"
+                      value={draft.request.params.sell_above}
+                      onChange={(event) => updateDraftParam('sell_above', Number(event.target.value))}
+                    />
+                  </label>
+                </>
+              )}
+            </div>
+
+            <div className="setup-form-grid">
+              <label>
+                최대 포지션 %
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={draft.request.risk_limits.max_position_pct}
+                  onChange={(event) => updateDraftRisk('max_position_pct', Number(event.target.value))}
+                />
+              </label>
+              <label>
+                주문당 최대 금액
+                <input
+                  type="number"
+                  min="1000"
+                  step="10000"
+                  value={draft.request.risk_limits.max_order_notional}
+                  onChange={(event) => updateDraftRisk('max_order_notional', Number(event.target.value))}
+                />
+              </label>
+              <label>
+                최대 진입 수
+                <input
+                  type="number"
+                  min="0"
+                  value={draft.request.risk_limits.max_orders}
+                  onChange={(event) => updateDraftRisk('max_orders', Number(event.target.value))}
+                />
+              </label>
+              <label>
+                손실 중단 %
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={draft.request.risk_limits.max_session_loss_pct}
+                  onChange={(event) => updateDraftRisk('max_session_loss_pct', Number(event.target.value))}
+                />
+              </label>
+            </div>
+
+            <div className="setup-inline-options">
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={draft.active}
+                  onChange={(event) => setDraft((current) => ({ ...current, active: event.target.checked }))}
+                />
+                저장 후 활성화
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={draft.request.risk_limits.kill_switch}
+                  onChange={(event) => updateDraftRisk('kill_switch', event.target.checked)}
+                />
+                킬 스위치
+              </label>
+              <label>
+                충돌 정책
+                <select
+                  value={draft.conflict_policy}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, conflict_policy: event.target.value as BotConflictPolicy }))
+                  }
+                >
+                  <option value="allow">{botConflictPolicyLabel('allow')}</option>
+                  <option value="block_same_symbol">{botConflictPolicyLabel('block_same_symbol')}</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="modal-actions">
+              <button className="secondary-button compact-action" onClick={() => setSetupOpen(false)} type="button">
+                취소
+              </button>
+              <button className="secondary-button compact-action" onClick={() => void submitDraft(false)} disabled={loading || saving}>
+                <Save size={15} />
+                {saving ? '저장 중' : '저장'}
+              </button>
+              <button className="run-button compact-action" onClick={() => void submitDraft(true)} disabled={loading || saving}>
+                <Play size={15} />
+                저장 후 실행
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="bot-delete-title">
+            <div className="modal-title">
+              <div>
+                <span>삭제 확인</span>
+                <h3 id="bot-delete-title">{deleteTarget.name} 봇을 삭제할까요?</h3>
+              </div>
+              <button className="icon-button" onClick={() => setDeleteTarget(null)} title="닫기">
+                <X size={16} />
+              </button>
+            </div>
+            <p>
+              봇 프로필은 삭제되지만 이미 저장된 실행 기록은 유지됩니다.
+              {deleteTarget.active ? ' 활성 봇이므로 예약 실행도 중단됩니다.' : ''}
+              {deleteTargetHasPosition ? ' 최근 paper position이 열려 있어 삭제 전 확인이 필요합니다.' : ''}
+            </p>
+            <div className="modal-actions">
+              <button className="secondary-button compact-action" onClick={() => setDeleteTarget(null)}>
+                취소
+              </button>
+              <button
+                className="stop-button compact-action"
+                onClick={() => {
+                  const botId = deleteTarget.id;
+                  setDeleteTarget(null);
+                  onDeleteBot(botId);
+                }}
+                disabled={runningId === deleteTarget.id}
+              >
+                <Trash2 size={15} />
+                삭제
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function botStyleLabel(style: BotOperatingStyle) {
-  return style.replaceAll('_', ' ');
+function BotFleetDetailPanel({
+  profile,
+  latestRun,
+  tab,
+  backtestRuns,
+  backtestResult,
+  backtestLoading,
+  backtestError,
+  onTabChange,
+  onRunBacktest,
+}: {
+  profile: BotProfile;
+  latestRun?: BotRun;
+  tab: BotDetailTab;
+  backtestRuns: BacktestRunSummary[];
+  backtestResult?: BacktestResponse;
+  backtestLoading: boolean;
+  backtestError: string | null;
+  onTabChange: (tab: BotDetailTab) => void;
+  onRunBacktest: () => void;
+}) {
+  const currency = currencyForSource(profile.request.source);
+  const matchingRuns = backtestRuns
+    .filter((run) => botBacktestRunMatchesProfile(run, profile))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 4);
+  const latestBacktestSummary = matchingRuns[0];
+  const displayedMetrics = backtestResult?.metrics ?? latestBacktestSummary?.metrics;
+  const displayedWarnings = backtestResult?.warnings ?? latestBacktestSummary?.warnings ?? [];
+  const latestSession = latestRun?.session;
+  const backtestRequest = backtestRequestFromBot(profile);
+  const metricItems = [
+    { label: '최종 자본', value: money(displayedMetrics?.final_equity, currency) },
+    { label: '수익률', value: percent(displayedMetrics?.total_return_pct), tone: displayedMetrics?.total_return_pct },
+    { label: '전략 우위', value: percent(displayedMetrics?.strategy_edge_pct), tone: displayedMetrics?.strategy_edge_pct },
+    { label: '최대 낙폭', value: percent(displayedMetrics?.max_drawdown_pct) },
+    { label: '샤프', value: number(displayedMetrics?.sharpe) },
+    { label: '거래 수', value: displayedMetrics?.trades.toString() ?? '-' },
+  ];
+
+  return (
+    <div className="bot-detail-panel">
+      <div className="bot-detail-header">
+        <BotProfileAvatar profile={profile} status={profile.active ? latestRun?.status ?? 'idle' : 'paused'} />
+        <div>
+          <span>봇 상세</span>
+          <strong>{profile.name}</strong>
+          <p>{profile.description}</p>
+        </div>
+        <span className={botStatusClass(profile.active ? latestRun?.status ?? 'idle' : 'paused')}>
+          {botVisualStatusLabel(profile.active ? latestRun?.status ?? 'idle' : 'paused')}
+        </span>
+      </div>
+
+      <div className="bot-detail-tabs" role="tablist" aria-label={`${profile.name} 상세 탭`}>
+        <button
+          className={`bot-detail-tab${tab === 'overview' ? ' bot-detail-tab-active' : ''}`}
+          onClick={() => onTabChange('overview')}
+          role="tab"
+          type="button"
+        >
+          개요
+        </button>
+        <button
+          className={`bot-detail-tab${tab === 'backtest' ? ' bot-detail-tab-active' : ''}`}
+          onClick={() => onTabChange('backtest')}
+          role="tab"
+          type="button"
+        >
+          백테스트
+        </button>
+      </div>
+
+      {tab === 'overview' ? (
+        <div className="bot-detail-grid">
+          <div>
+            <span>전략</span>
+            <strong>{strategyLabelKo(profile.request.strategy)}</strong>
+            <p>{botStyleLabel(profile.operating_style)} · {sourceLabelKo(profile.request.source)}</p>
+          </div>
+          <div>
+            <span>운영 모드</span>
+            <strong>{botExecutionLabel(profile.execution_mode)}</strong>
+            <p>{profile.active ? `다음 ${shortDateTime(profile.next_run_at)}` : '일시정지'}</p>
+          </div>
+          <div>
+            <span>자본 / 종목</span>
+            <strong>{money(profile.request.initial_cash, currency)}</strong>
+            <p>{profile.request.symbol} · {profile.request.timeframe}</p>
+          </div>
+          <div>
+            <span>리스크</span>
+            <strong>{percent(profile.request.risk_limits.max_position_pct)}</strong>
+            <p>주문 {money(profile.request.risk_limits.max_order_notional, currency)} · 손실 중단 {percent(profile.request.risk_limits.max_session_loss_pct)}</p>
+          </div>
+          <div>
+            <span>최근 실행</span>
+            <strong>{latestRun ? botRunStatusLabel(latestRun.status) : '-'}</strong>
+            <p>{latestRun ? shortDateTime(latestRun.checked_at) : '아직 실행 기록 없음'}</p>
+          </div>
+          <div>
+            <span>최근 수익률</span>
+            <strong className={valueToneClass(latestSession?.summary.total_return_pct)}>
+              {percent(latestSession?.summary.total_return_pct)}
+            </strong>
+            <p>포지션 {percent(latestSession?.summary.open_position_pct)} · 주문 {latestSession?.summary.orders ?? 0}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="bot-backtest-panel">
+          <div className="bot-backtest-actions">
+            <div>
+              <strong>{backtestRequest.symbol} · {strategyLabelKo(backtestRequest.strategy)}</strong>
+              <span>
+                {sourceLabelKo(backtestRequest.source)} · {backtestRequest.candle_limit}캔들 · 수수료 {number(backtestRequest.fee_bps)}bps
+              </span>
+            </div>
+            <button
+              className="run-button compact-action"
+              disabled={backtestLoading}
+              onClick={onRunBacktest}
+              type="button"
+            >
+              <TrendingUp size={15} />
+              {backtestLoading ? '실행 중' : '백테스트 실행'}
+            </button>
+          </div>
+
+          {displayedMetrics ? (
+            <div className="bot-backtest-metrics">
+              {metricItems.map((item) => (
+                <div className="metric-card" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong className={item.tone !== undefined ? valueToneClass(item.tone) : undefined}>
+                    {item.value}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bot-detail-empty">아직 이 봇의 백테스트 결과가 없습니다.</div>
+          )}
+
+          {backtestResult ? (
+            <div className="bot-backtest-chart">
+              <EquityChart
+                points={backtestResult.equity_curve}
+                currency={currency}
+                request={backtestResult.request}
+                metrics={backtestResult.metrics}
+              />
+            </div>
+          ) : null}
+
+          {displayedWarnings.map((warning, index) => (
+            <p className="warning-message" key={`${warning}-${index}`}>{warning}</p>
+          ))}
+
+          <div className="bot-backtest-history">
+            <div className="bot-backtest-history-title">
+              <strong>최근 백테스트</strong>
+              <span>{matchingRuns.length}개</span>
+            </div>
+            {matchingRuns.length > 0 ? (
+              matchingRuns.map((run) => (
+                <div className="bot-backtest-run-row" key={run.id}>
+                  <div>
+                    <strong>{shortDateTime(run.created_at)}</strong>
+                    <span>{run.request.symbol} · {strategyLabelKo(run.request.strategy)}</span>
+                  </div>
+                  <span className={valueToneClass(run.metrics.total_return_pct)}>{percent(run.metrics.total_return_pct)}</span>
+                  <span>{percent(run.metrics.max_drawdown_pct)} MDD</span>
+                  <span>{number(run.metrics.sharpe)} Sharpe</span>
+                </div>
+              ))
+            ) : (
+              <div className="bot-detail-empty">저장된 동일 전략 백테스트가 없습니다.</div>
+            )}
+          </div>
+
+          {backtestError ? <p className="error-message">{backtestError}</p> : null}
+        </div>
+      )}
+    </div>
+  );
 }
 
-function botStatusClass(status: BotRunStatus | 'idle') {
+function botBacktestRunMatchesProfile(run: BacktestRunSummary, profile: BotProfile) {
+  return (
+    run.request.symbol === profile.request.symbol &&
+    run.request.source === profile.request.source &&
+    run.request.strategy === profile.request.strategy &&
+    run.request.timeframe === profile.request.timeframe
+  );
+}
+
+function botStyleLabel(style: BotOperatingStyle) {
+  const labels: Record<BotOperatingStyle, string> = {
+    trend_following: '추세 추종',
+    mean_reversion: '되돌림',
+    breakout: '돌파',
+    portfolio_rotation: '포트폴리오 로테이션',
+    defensive_monitor: '방어 감시',
+    custom: '사용자 정의',
+  };
+  return labels[style];
+}
+
+function strategyLabelKo(strategy: Strategy) {
+  const labels: Record<Strategy, string> = {
+    sma_crossover: 'SMA 크로스오버',
+    donchian_breakout: '돈치안 돌파',
+    rsi_mean_reversion: 'RSI 되돌림',
+  };
+  return labels[strategy];
+}
+
+function sourceLabelKo(source: Source) {
+  const labels: Record<Source, string> = {
+    sample: '샘플 코인',
+    upbit: '업비트 공개 시세',
+    sample_us: '샘플 미국 주식/ETF',
+    alpha_vantage: 'Alpha Vantage 일봉',
+  };
+  return labels[source];
+}
+
+function botExecutionLabel(mode: BotExecutionMode) {
+  return mode === 'paper' ? '페이퍼' : '드라이런';
+}
+
+function botConflictPolicyLabel(policy: BotConflictPolicy) {
+  return policy === 'allow' ? '같은 종목 허용' : '같은 종목 차단';
+}
+
+function botVisualStatusLabel(status: BotVisualStatus) {
+  const labels: Record<BotVisualStatus, string> = {
+    completed: '완료',
+    halted: '중단',
+    blocked: '차단',
+    error: '오류',
+    idle: '대기',
+    paused: '일시정지',
+    running: '실행 중',
+  };
+  return labels[status];
+}
+
+function botFleetStatusFilterLabel(filter: BotFleetStatusFilter) {
+  const labels: Record<BotFleetStatusFilter, string> = {
+    all: '전체',
+    active: '활성',
+    paused: '일시정지',
+    running: '실행 중',
+    completed: '완료',
+    attention: '주의',
+  };
+  return labels[filter];
+}
+
+function botRunStatusLabel(status: BotRunStatus) {
+  return botVisualStatusLabel(status);
+}
+
+function botStatusClass(status: BotVisualStatus) {
   if (status === 'completed') return 'session-status status-completed';
+  if (status === 'running') return 'session-status status-running';
+  if (status === 'paused') return 'session-status status-paused';
   if (status === 'halted' || status === 'blocked' || status === 'error') return 'session-status status-halted';
   return 'session-status status-idle';
+}
+
+function valueToneClass(value?: number | null) {
+  if (value === undefined || value === null || Number.isNaN(value)) return 'value-neutral';
+  if (value > 0) return 'value-profit';
+  if (value < 0) return 'value-loss';
+  return 'value-neutral';
+}
+
+function botAvatarStatusClass(status: BotVisualStatus) {
+  if (status === 'completed') return 'bot-avatar-completed';
+  if (status === 'running') return 'bot-avatar-running';
+  if (status === 'paused') return 'bot-avatar-paused';
+  if (status === 'halted' || status === 'blocked' || status === 'error') return 'bot-avatar-halted';
+  return 'bot-avatar-idle';
 }
 
 function DataProvidersPanel({
@@ -9651,6 +10385,32 @@ function money(value?: number, currency: DisplayCurrency = 'KRW') {
     currency,
     maximumFractionDigits: currency === 'USD' ? 2 : 0,
   }).format(value);
+}
+
+function compactMoney(value?: number | null, currency: DisplayCurrency = 'KRW') {
+  if (value === undefined || value === null || Number.isNaN(value)) return '-';
+  return new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'ko-KR', {
+    style: 'currency',
+    currency,
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function compactNumber(value?: number | null) {
+  if (value === undefined || value === null || Number.isNaN(value)) return '-';
+  return new Intl.NumberFormat('ko-KR', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function tickerVolumeDisplay(ticker: MarketTicker | null) {
+  if (!ticker) return '-';
+  if (ticker.quote_volume_24h !== undefined && ticker.quote_volume_24h !== null) {
+    return compactMoney(ticker.quote_volume_24h, currencyForSource(ticker.source));
+  }
+  return compactNumber(ticker.volume_24h);
 }
 
 function percent(value?: number) {

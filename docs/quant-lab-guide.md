@@ -19,6 +19,14 @@ testing are faster, while keeping stock/ETF paper trading open as the more stabl
 
 ## Local Runbook
 
+One-command local app launcher:
+
+```bash
+python3 scripts/run_local_app.py
+```
+
+Use `--no-browser` to start backend/frontend without opening the browser.
+
 Backend:
 
 ```bash

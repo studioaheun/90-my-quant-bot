@@ -95,6 +95,10 @@ def check_frontend_theme(frontend_dir: Path) -> dict[str, Any]:
     missing_light = [token for token in REQUIRED_THEME_TOKENS if token not in light_tokens]
     missing_dark = [token for token in REQUIRED_THEME_TOKENS if token not in dark_tokens]
     parity_missing = sorted(token for token in light_tokens if token.startswith("--") and token not in dark_tokens)
+    has_theme_toggle_labels = (
+        ("Switch to white theme" in main and "Switch to dark theme" in main)
+        or ("라이트 테마로 전환" in main and "다크 테마로 전환" in main)
+    )
 
     checks = [
         theme_check(
@@ -130,8 +134,7 @@ def check_frontend_theme(frontend_dir: Path) -> dict[str, Any]:
             (
                 'className="theme-toggle"' in main
                 and "setTheme((current) => (current === 'dark' ? 'light' : 'dark'))" in main
-                and "Switch to white theme" in main
-                and "Switch to dark theme" in main
+                and has_theme_toggle_labels
             ),
             "Topbar exposes a labelled dark/white theme toggle.",
         ),
